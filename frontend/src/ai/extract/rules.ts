@@ -401,9 +401,10 @@ const DOSE_RE = /(\d+(?:\.\d+)?)\s*(mg|mcg|µg|g|gm|ml|iu|units?)(?![\p{L}])/u;
 // Most specific first: "twice daily" must not be caught by the bare "daily" of once-daily.
 const FREQUENCIES: [RegExp, string][] = [
   [/\b(\d)\s*-\s*(\d)\s*-\s*(\d)\b/, ""],
-  [new RegExp(`${B}(qid|four times (?:a )?day|four times daily|char baar|चार बार)${E}`, "u"), "four times daily"],
-  [new RegExp(`${B}(tds|tid|thrice (?:a )?day|thrice daily|three times (?:a |per )?day|three times daily|teen baar|तीन बार)${E}`, "u"), "three times daily"],
-  [new RegExp(`${B}(bd|bid|twice (?:a |per )?day|twice daily|two times (?:a )?day|do baar|din mein do baar|दिन में दो बार|दो बार)${E}`, "u"), "twice daily"],
+  // Speech recognition writes numbers as digits ("3 times a day"), so both forms are listed.
+  [new RegExp(`${B}(qid|(?:four|4) times (?:a |per )?day|(?:four|4) times daily|char baar|चार बार)${E}`, "u"), "four times daily"],
+  [new RegExp(`${B}(tds|tid|thrice (?:a )?day|thrice daily|(?:three|3) times (?:a |per )?day|(?:three|3) times daily|teen baar|तीन बार)${E}`, "u"), "three times daily"],
+  [new RegExp(`${B}(bd|bid|twice (?:a |per )?day|twice daily|(?:two|2) times (?:a |per )?day|(?:two|2) times daily|do baar|din mein do baar|दिन में दो बार|दो बार)${E}`, "u"), "twice daily"],
   [new RegExp(`${B}(od|qd|once (?:a |per )?day|once daily|daily|din mein ek baar|दिन में एक बार|एक बार)${E}`, "u"), "once daily"],
   [new RegExp(`${B}(hs|at bedtime|at night|raat ko|रात को)${E}`, "u"), "at night"],
   [new RegExp(`${B}(sos|prn|as needed|when needed|if needed|zarurat padne par|जरूरत पडने पर)${E}`, "u"), "as needed"],
@@ -544,17 +545,77 @@ function extractFollowUp(seg: Segment, text: string, out: Extraction, rel: numbe
   };
 }
 
+// ------------------------------------------------------------------ misheard drug names
+
+/**
+ * Speech recognition misspells drug names (measured: Whisper wrote "paracetamal" and
+ * "para-setimal" for paracetamol), so exact matching would silently miss prescriptions.
+ * Near-misses of known medicine/allergen names are corrected here, and anything found via a
+ * correction is given low confidence so the clinician has to confirm it.
+ */
+const FUZZY_TARGETS: [string, string][] = Object.entries({ ...MEDICINES, ...ALLERGENS }).flatMap(([canonical, forms]) =>
+  forms.filter((f) => /^[a-z]{6,}$/.test(f)).map((f) => [f, canonical] as [string, string]),
+);
+const EXACT_FORMS = new Set(FUZZY_TARGETS.map(([f]) => f));
+
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+export function correctDrugSpellings(text: string): { text: string; corrected: Map<string, string> } {
+  const corrected = new Map<string, string>(); // canonical name -> what was heard
+  const fixed = text.replace(/[a-z]+(?:-[a-z]+)?/g, (word) => {
+    const w = word.replace(/-/g, "");
+    if (w.length < 6 || EXACT_FORMS.has(w)) return word;
+    const max = w.length >= 10 ? 3 : w.length >= 8 ? 2 : 1;
+    let best: { form: string; canonical: string; d: number } | null = null;
+    for (const [form, canonical] of FUZZY_TARGETS) {
+      if (form[0] !== w[0]) continue;
+      const d = editDistance(w, form, max);
+      if (d <= max && (!best || d < best.d)) best = { form, canonical, d };
+    }
+    if (!best) return word;
+    corrected.set(best.canonical, word);
+    return best.form;
+  });
+  return { text: fixed, corrected };
+}
+
+function flagCorrections<T>(items: Extracted<T>[], nameOf: (v: T) => string, corrected: Map<string, string>) {
+  for (const item of items) {
+    const heard = corrected.get(nameOf(item.value));
+    if (!heard || item.evidence.includes("heard as")) continue;
+    item.confidence = Math.min(item.confidence, 0.5);
+    item.evidence += ` (heard as "${heard}")`;
+  }
+}
+
 // ------------------------------------------------------------------ entry point
 
 export function extractWithRules(segments: Segment[]): Extraction {
   const out = emptyExtraction();
   for (const seg of segments) {
-    const text = normalize(seg.text);
+    const original = normalize(seg.text);
+    const { text, corrected } = correctDrugSpellings(original);
     const rel = Math.max(0.5, Math.min(1, seg.reliability ?? 1));
     extractVitals(seg, text, out, rel);
     extractSymptoms(seg, text, out, rel);
     const claimed = extractAllergies(seg, text, out, rel);
     extractMedications(seg, text, out, rel, claimed);
+    if (corrected.size) {
+      // Only items whose name came from a correction (not also spelled correctly elsewhere).
+      const exact = (name: string) => new RegExp(`(?<![\\p{L}])(${(MEDICINES[name] ?? ALLERGENS[name] ?? []).join("|")})(?![\\p{L}])`, "u").test(original);
+      const really = new Map([...corrected].filter(([name]) => !exact(name)));
+      flagCorrections(out.medications, (m) => m.name, really);
+      flagCorrections(out.allergies, (a) => a.substance, really);
+    }
     extractLabs(seg, text, out, rel);
     extractDiagnosis(seg, text, out, rel);
     extractFollowUp(seg, text, out, rel);

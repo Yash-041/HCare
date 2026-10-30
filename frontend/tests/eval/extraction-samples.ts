@@ -5,7 +5,7 @@
  */
 export interface Sample {
   id: string;
-  lang: "en" | "hinglish" | "hi" | "ocr";
+  lang: "en" | "hinglish" | "hi" | "ocr" | "asr";
   text: string;
   expect: {
     symptoms?: string[];
@@ -111,6 +111,16 @@ export const SAMPLES: Sample[] = [
       labs: ["Haemoglobin", "Total WBC count", "Platelets", "Serum creatinine"],
     },
   },
+  // Real Whisper Base transcripts from the speech evaluation (docs/eval/results.json),
+  // including its mistakes ("complaints of", "para-setimal"): end-to-end speech -> fields.
+  { id: "asr-1", lang: "asr", text: "The patient has had a fever for three days with a dry cough.", expect: { symptoms: ["fever", "cough"] } },
+  { id: "asr-2", lang: "asr", text: "She is allergic to penicillin and complaints of body ache.", expect: { symptoms: ["body ache"], allergies: ["Penicillin"] } },
+  { id: "asr-3", lang: "asr", text: "Blood pressure is 140 over 90 and pulse is 96.", expect: { vitals: { bp_systolic: 140, bp_diastolic: 90, pulse: 96 } } },
+  { id: "asr-4", lang: "asr", text: "Give para-setimal 500 mg 3 times a day for 3 days.", expect: { medications: ["Paracetamol"] } },
+  { id: "asr-5", lang: "asr", text: "The child has loose motions since yesterday and vomiting twice.", expect: { symptoms: ["diarrhoea", "vomiting"] } },
+  { id: "asr-6", lang: "asr", text: "Advise oral rehydration solution and zinc for 14 days.", expect: { medications: ["ORS", "Zinc"] } },
+  { id: "asr-7", lang: "asr", text: "He has breathlessness on walking and chest pain since morning.", expect: { symptoms: ["breathlessness", "chest pain"] } },
+  { id: "asr-8", lang: "asr", text: "Review after one week if the fever does not settle.", expect: { symptoms: ["fever"] } },
   {
     id: "ocr-2",
     lang: "ocr",

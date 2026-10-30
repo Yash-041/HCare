@@ -1,85 +1,125 @@
-# HCare — Offline-first clinical assistant
+# HCare: offline-first AI clinical assistant
 
-Offline-first PWA for rural health workers: voice notes and document scans become structured, clinician-verified case files that sync safely to a central server.
+**For rural health workers with no reliable internet.** Speak a clinical note or photograph a lab report. The AI on the phone turns it into a structured case file, a clinician verifies it, and it syncs safely to the clinic server whenever a connection appears. It works in **airplane mode**: no cloud AI, no patient data leaving the device unencrypted.
 
-| Part | Stack |
+> **Judges, start here:** [Demo script](docs/DEMO.md) · [Evaluation results](docs/EVALUATION.md) · [Sync engine](docs/SYNC_ENGINE.md) (the core deliverable) · [Security](docs/SECURITY.md) · [AI pipeline](docs/AI_PIPELINE.md) · [Setup on a new laptop](docs/SETUP.md)
+
+## What it does
+
+| | |
 |---|---|
-| `backend/` | FastAPI, SQLAlchemy, PostgreSQL. Contains the sync engine (idempotent ops, versioning, conflicts, hash-chained audit log). |
-| `frontend/` | React, TypeScript, Vite PWA, Dexie (IndexedDB). Contains the offline app shell and the client sync engine (outbox, retries, conflicts). |
-| `docs/` | [SYNC_ENGINE.md](docs/SYNC_ENGINE.md) (core deliverable: guarantees and conflict workflow) · [SECURITY.md](docs/SECURITY.md) · [AI_PIPELINE.md](docs/AI_PIPELINE.md) · [PHASE1_DATA_MODEL.md](docs/PHASE1_DATA_MODEL.md) · [SETUP.md](docs/SETUP.md) |
+| 🎙 **Voice notes → text** | Whisper runs **in the browser** (Web Worker, WebGPU or CPU). Supports English, Hindi and 9 other Indian languages, with optional translation to English. The transcript is always editable |
+| 📄 **Document photos → text** | The photo is cleaned up on the phone (straightened, shadows removed, denoised), then read by Tesseract OCR. Uncertain words are highlighted for checking |
+| 🧾 **Structured case file** | Multilingual extraction (English, Hinglish, Devanagari) of complaint, symptoms, vitals, medicines, allergies, labs and follow-up. **Every field shows its source and confidence.** Nothing is final until a clinician verifies it |
+| 🔎 **Offline search** | Searches by name, ID, symptom, medicine or date in any language ("bukhar" finds "fever"; "dolo" finds paracetamol). Optional search by meaning. About 10 ms on thousands of records |
+| 🩺 **Patient history** | A summary of conditions, allergies, medicines and trends (BP, Hb…), with **every line linked to its source visit** and safety alerts (e.g. "prescribed a drug the patient is allergic to") |
+| 🔄 **Sync engine** | Offline outbox, unique op IDs, version checks, retry-safe requests, conflict detection, and **field-by-field three-way merge** recorded in a tamper-evident audit log |
+| 🔒 **Security** | AES-256-GCM encryption on the device, encrypted sync payloads, lock screen, remote wipe of lost phones, role-based access |
+| 👥 **Roles** | Health workers capture visits. Doctors get a review queue. Admins manage staff, devices and the audit log |
 
-**New laptop? Follow [docs/SETUP.md](docs/SETUP.md)** for step-by-step setup, offline demo, phone access, tests and troubleshooting.
+## Architecture
 
-## Run the backend
-
-With Docker (PostgreSQL plus the API on http://localhost:8000; API docs at `/docs`):
-
-```bash
-docker compose up -d --build
+```mermaid
+flowchart LR
+  subgraph Phone["📱 Phone / tablet: works fully offline (PWA)"]
+    direction TB
+    UI["React UI<br/>capture · review · search · conflicts"]
+    subgraph AI["On-device AI (Web Workers)"]
+      W["Whisper<br/>speech → text"]
+      O["Image clean-up + Tesseract<br/>photo → text"]
+      X["Rule extractor (+ optional LLM)<br/>text → case file"]
+      E["MiniLM embeddings<br/>search by meaning"]
+    end
+    subgraph Store["Encrypted IndexedDB (AES-256-GCM)"]
+      R[("records")]
+      Q[("outbox")]
+      S[("blind search index")]
+      B[("photos · recordings")]
+    end
+    SE["Sync engine<br/>outbox · retries · version chaining · 3-way merge"]
+    SW["Service Worker<br/>app shell + model cache"]
+    UI --> AI --> UI
+    UI <--> Store
+    SE <--> Store
+  end
+  subgraph Server["🏥 Clinic server (Docker)"]
+    API["FastAPI<br/>auth · RBAC · idempotency ledger<br/>version check · conflicts · remote wipe"]
+    PG[("PostgreSQL<br/>records · versions · conflicts<br/>hash-chained audit log")]
+    API <--> PG
+  end
+  SE <-- "HTTPS + encrypted payloads<br/>(when a connection appears)" --> API
 ```
 
-Without Docker (uses SQLite):
+**Lifecycle of a visit:** voice or photo → text on the device → the clinician corrects it → structured into a draft case file with sources → verified by a clinician → saved encrypted with an outbox entry → synced once online.
+- The server applies the change, ignores duplicates, or stores a conflict.
+- A conflict is merged field by field and audited.
+
+## Why it's different
+
+- **Really offline, really on-device.** All AI runs in the browser. The app loads, signs in, captures, structures, searches and summarizes in airplane mode. Each model downloads once.
+- **AI never decides alone.**
+  - Extraction only takes facts stated in the notes.
+  - Anything from the optional language model must be found in the source text, or it's dropped and reported. An invented diagnosis is a test case, and it's rejected.
+  - Every field links to its source recording or photo.
+  - Low-confidence fields must be confirmed before **Verify** is enabled.
+- **Sync that can be proven.**
+  - Each guarantee in the problem statement (no loss, no duplicates, no silent overwrite, safe retries, detected conflicts) is tested against the real server with injected network faults. See [SYNC_ENGINE.md](docs/SYNC_ENGINE.md).
+  - Merges never drop an allergy, and a verified case file loses its verification if a merge changes it.
+- **Built for cheap phones.**
+  - Quantized models load on first use, and heavy work runs in workers.
+  - The rule extractor works on any phone.
+  - The 1.5B language model is offered only where the hardware can run it. On CPU-only phones it would run out of memory, as measured in testing.
+
+## Results
+
+Measured on the real app in a browser, on a CPU-only laptop. Methods and caveats are in [docs/EVALUATION.md](docs/EVALUATION.md).
+
+| | |
+|---|---|
+| Speech to text (Whisper Base, on-device) | **3.6 % WER** · 2.4 s per clip |
+| OCR on phone-style photos (tilt, shadow, blur) | **2.1 % CER** · the worst page was also the one flagged least certain |
+| Case-file extraction (18 notes, including real speech-recognition output) | **100 % precision / 100 % recall** (74 fields) |
+| Sync fault scenarios (duplicates, lost acks, cut-off batches, two-device conflicts) | **All pass**; no record lost, duplicated or silently overwritten |
+| Offline search | **1–15 ms** per query on thousands of records, including encrypted ones |
+| Automated tests | **131** frontend · **44** backend · **11** browser (+ evaluation run, + 1 GPU-only) |
+
+## Quick start
 
 ```bash
-cd backend
-python -m venv .venv && .venv\Scripts\activate
-pip install -r requirements-dev.txt
-uvicorn app.main:create_app --factory --reload
+git clone https://github.com/Yash-041/HCare.git && cd HCare
+docker compose up -d --build                     # API on :8000 + PostgreSQL
+cd frontend && npm install && npm run build && npx vite preview   # app on http://localhost:4173
 ```
 
-## Run the frontend
+Sign in as **`asha` / `asha1234`** (health worker), **`doctor` / `doctor123`**, or **`admin` / `admin123`**.
 
-```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:5173 ; /api is proxied to the backend on :8000
-```
+For full setup (Windows, macOS or Linux), the offline demo, phone access and troubleshooting, see **[docs/SETUP.md](docs/SETUP.md)**.
 
-The Service Worker only exists in a production build. To try offline mode:
+## Tech stack
 
-```bash
-npm run build && npx vite preview    # http://localhost:4173
-```
-
-Open the app once while online and sign in. Then turn on airplane mode, or tick "Offline" in DevTools → Network, and reload. The app still loads, sign-in works, and saved changes queue up until the connection returns.
-
-On a phone, Service Workers and WebCrypto need HTTPS, or `localhost` if you use USB port forwarding.
-
-Demo users (seeded when `SEED_DEMO_USERS=1`):
-
-| Username | Password | Role |
-|---|---|---|
-| `asha` | `asha1234` | health worker |
-| `doctor` | `doctor123` | doctor |
-| `admin` | `admin123` | admin |
+| Layer | Technology |
+|---|---|
+| App (PWA) | React 19, TypeScript, Vite, vite-plugin-pwa (Workbox), Dexie (IndexedDB) |
+| On-device AI | transformers.js (Whisper, MiniLM, optional Qwen2.5-1.5B on WebGPU), Tesseract.js, custom image preprocessing |
+| Crypto | WebCrypto (PBKDF2, AES-GCM), @noble/ciphers and @noble/hashes (synchronous AES-GCM inside IndexedDB transactions, HMAC blind index) |
+| Server | FastAPI, SQLAlchemy, PostgreSQL 16, PyJWT, cryptography |
+| Tests | pytest, Vitest, Playwright (including real-model and two-device tests) |
 
 ## Tests
 
 ```bash
-cd backend
-pytest                                   # SQLite
-# against PostgreSQL (start the db with: docker compose up -d db)
-TEST_DATABASE_URL=postgresql+psycopg://hcare:hcare@localhost:55432/hcare_test pytest
+cd backend && pytest                    # sync server, security, staff management (SQLite; Postgres via TEST_DATABASE_URL)
+cd frontend && npm test                 # sync engine vs the real API with network faults, encryption, AI extraction, search, merge
+cd frontend && npm run test:e2e         # real browser: offline reload and sign-in, two-device conflict, search, history, roles
+HCARE_E2E_AI=1 npm run test:e2e         # plus real Whisper, OCR and embedding models
+HCARE_EVAL=1 npx playwright test e2e/evaluation.pw.ts   # regenerate docs/eval/results.json
 ```
 
-Frontend tests start the real backend automatically (they need `backend/.venv`):
+## Repository
 
-```bash
-cd frontend
-npm test             # TypeScript sync engine vs. the real API, with network faults injected
-npm run test:e2e     # Playwright in Chromium: offline reload, offline sign-in, two-device conflict
 ```
-
-The tests cover these sync scenarios:
-
-- duplicate ops
-- a lost acknowledgment
-- a batch cut off partway
-- concurrent edits from two devices
-- merge resolution
-- a stale resolution that is superseded
-- two devices creating the same record
-- a delete that conflicts with an edit
-- pull pagination and ordering
-- validation and role-based access
-- detecting tampering in the audit log
+backend/    FastAPI sync server (app/), pytest suite (tests/), Dockerfile
+frontend/   PWA: src/lib (sync, crypto, search, history, merge), src/ai (workers, extraction), src/pages
+            tests/ (Vitest), e2e/ (Playwright, evaluation, demo fixtures)
+docs/       SYNC_ENGINE, SECURITY, AI_PIPELINE, EVALUATION, DEMO, SETUP, data model
+```

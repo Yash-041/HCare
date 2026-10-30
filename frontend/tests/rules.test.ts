@@ -109,6 +109,19 @@ describe("medications and allergies", () => {
     ]);
   });
 
+  it("misheard drug names from speech recognition (real Whisper outputs) are found, at low confidence", () => {
+    for (const heard of ["give paracetamal 500mg 3 times a day for 3 days.", "Give para-setimal 500 mg 3 times a day for 3 days."]) {
+      const [m] = run(heard).medications;
+      expect(m.value).toMatchObject({ name: "Paracetamol", dose: "500 mg", frequency: "three times daily", duration: "3 days" });
+      expect(m.confidence).toBeLessThan(0.6); // below the bar: the clinician must confirm it
+      expect(m.evidence).toMatch(/heard as "para-?(cetamal|setimal)"/);
+    }
+    expect(run("allergic to penicilin").allergies[0].value.substance).toBe("Penicillin");
+    // Correct spellings keep normal confidence; ordinary words are not "corrected" into drugs.
+    expect(run("paracetamol 500 mg TDS").medications[0].confidence).toBeGreaterThan(0.6);
+    expect(run("patient complains of weakness and headache since morning").medications).toEqual([]);
+  });
+
   it("'twice a day' is a frequency, not a one-day course", () => {
     const [m] = run("cetirizine 10 mg twice a day").medications;
     expect(m.value).toMatchObject({ frequency: "twice daily", duration: null });
