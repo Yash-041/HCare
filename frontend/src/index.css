@@ -1082,3 +1082,74 @@ button.secondary.active {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------- conflict resolution */
+
+.merge-row {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin: 0;
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.merge-row.compact {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.7rem 0 0.4rem;
+  margin-top: 0.4rem;
+}
+.merge-row.undecided {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px var(--amber);
+}
+.merge-row legend {
+  padding: 0 0.3rem;
+}
+.merge-row.compact legend {
+  padding: 0;
+  float: left;
+  width: 100%;
+  margin-bottom: 0.4rem;
+}
+.merge-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+.merge-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  font-weight: 400;
+  position: relative;
+}
+.merge-opt input {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  width: auto;
+  min-height: 0;
+}
+.merge-opt.on {
+  border-color: var(--brand);
+  background: #f0fdfa;
+}
+.merge-side {
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding-right: 1.5rem;
+}
+.merge-value {
+  word-break: break-word;
+}
+.resolved-item {
+  align-items: flex-start;
+}

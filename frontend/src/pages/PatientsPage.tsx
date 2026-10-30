@@ -2,7 +2,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../app/AppContext";
-import { useConnectivity } from "../app/hooks";
+import { useConnectivity, useOutboxSummary } from "../app/hooks";
 import { SyncChip } from "../components/StatusBar";
 import type { SearchFilters, SearchHit } from "../lib/search/search";
 import type { ConsultationData, DocumentData, EntityName, LocalRecord, PatientData } from "../lib/types";
@@ -29,6 +29,7 @@ export function PatientsPage() {
   const [took, setTook] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
   const patients = useLiveQuery(() => db.patients.orderBy("updated_at").reverse().toArray(), [db]);
+  const { conflicts } = useOutboxSummary();
 
   // Re-run the search when the index changes (new visit saved, records synced).
   useEffect(() => search.onIndexed(() => setRevision((r) => r + 1)), [search]);
@@ -67,6 +68,12 @@ export function PatientsPage() {
           + New patient
         </Link>
       </div>
+      {conflicts > 0 && (
+        <div className="banner banner-conflict" role="status">
+          <span aria-hidden>⚠</span> {conflicts} record{conflicts === 1 ? " was" : "s were"} changed on two devices at once.{" "}
+          <Link to="/sync">Review and resolve</Link>
+        </div>
+      )}
       <div className="search-bar">
         <input
           className="search"

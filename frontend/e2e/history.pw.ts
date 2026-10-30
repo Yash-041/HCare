@@ -59,6 +59,10 @@ test("opening a new visit shows the sourced patient history, offline", async ({ 
 
   const page = await context.newPage();
   await page.goto("/");
+  // Offline navigation needs the service worker to control the page first.
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   await page.getByLabel("Username").fill("asha");
   await page.getByLabel("Password").fill("asha1234");
   await page.getByRole("button", { name: "Sign in" }).click();

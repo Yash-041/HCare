@@ -169,6 +169,7 @@ export class SyncEngine {
       data: op.data,
       client_ts: op.updated_at,
       resolves_conflict_id: op.resolves_conflict_id ?? null,
+      resolution: op.resolution ?? null,
     }));
 
     let results: OpResult[];

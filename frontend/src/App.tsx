@@ -3,6 +3,7 @@ import { AppProvider } from "./app/AppContext";
 import { TopBar } from "./components/StatusBar";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { CapturePage } from "./pages/CapturePage";
+import { ConflictPage } from "./pages/ConflictPage";
 import { ConsultationPage } from "./pages/ConsultationPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PatientPage } from "./pages/PatientPage";
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/patients/:id/capture" element={<CapturePage />} />
           <Route path="/patients/:id/consultations/:cid" element={<ConsultationPage />} />
           <Route path="/sync" element={<SyncPage />} />
+          <Route path="/sync/conflicts/:id" element={<ConflictPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppProvider>

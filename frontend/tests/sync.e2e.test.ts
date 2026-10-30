@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loginOffline, AuthError } from "../src/lib/auth";
+import { applyMerge, decisionSummary, initialDecisions, planMerge } from "../src/lib/merge";
 import { deleteRecord, resolveConflict, saveRecord } from "../src/lib/repo";
 import type { ConflictOut, PatientData } from "../src/lib/types";
 import { makeDevice, patient, serverHistory } from "./helpers";
@@ -197,6 +198,50 @@ describe("conflicts between two devices", () => {
     const onA = await a.db.patients.get(id);
     expect(onA?.version).toBe(3);
     expect(onA?.data).toMatchObject({ phone: "9000000001", village: "Kheri" });
+  });
+
+  it("three-way merge: automatic + decided fields, synced, decisions recorded on the server", async () => {
+    const a = await makeDevice("asha", "asha1234");
+    const b = await makeDevice("doctor", "doctor123");
+    const id = await saveRecord(a.db, a.actor, "patient", null, patient({ known_allergies: [{ substance: "Penicillin" }] }));
+    await a.engine.sync();
+    await b.engine.sync();
+
+    a.net.mode = b.net.mode = "down";
+    // A: new phone + village; B: different village + age + an extra allergy.
+    await saveRecord(a.db, a.actor, "patient", id, patient({ phone: "9000000001", village: "Kheri Kalan", known_allergies: [{ substance: "Penicillin" }] }));
+    await saveRecord(b.db, b.actor, "patient", id, patient({ village: "Kheri Khurd", age_years: 33, known_allergies: [{ substance: "Penicillin" }, { substance: "Sulfa drugs" }] }));
+    a.net.mode = b.net.mode = "up";
+    await a.engine.sync();
+    await b.engine.sync();
+
+    const [conflict] = await b.db.conflicts.toArray();
+    const mine = (await b.db.patients.get(id))!.data!;
+    const plan = planMerge(conflict.base_data, mine, conflict.current_data);
+    expect(plan[0]).toMatchObject({ path: "village", status: "clash" }); // clashes are listed first
+    expect(Object.fromEntries(plan.map((p) => [p.path, p.status]))).toEqual({
+      village: "clash",
+      phone: "theirs",
+      age_years: "mine",
+      known_allergies: "mine", // adding an allergy drops nothing, so it merges automatically
+    });
+    const decisions = { ...initialDecisions(plan), village: "theirs" as const };
+    const merged = applyMerge("patient", mine, conflict.current_data as PatientData, plan, decisions);
+    await resolveConflict(b.db, b.actor, conflict, { kind: "data", data: merged }, decisionSummary(plan, decisions));
+    expect(await b.engine.sync()).toMatchObject({ applied: 1, conflicts: 0 });
+
+    await a.engine.sync();
+    expect((await a.db.patients.get(id))!.data).toMatchObject({
+      village: "Kheri Kalan",
+      phone: "9000000001",
+      age_years: 33,
+      known_allergies: [{ substance: "Penicillin" }, { substance: "Sulfa drugs" }],
+    });
+    const resolved = await a.api.getConflict(conflict.id);
+    expect(resolved).toMatchObject({
+      status: "resolved",
+      resolution: { village: "theirs", phone: "theirs", age_years: "mine", known_allergies: "mine" },
+    });
   });
 
   it("pull does not overwrite a record that has unsynced local edits", async () => {

@@ -67,11 +67,12 @@ test("concurrent offline edits on two devices raise a conflict that the user res
   await a.getByText("← Patients").click();
   await a.getByText("Ravi Shankar").click();
 
-  // Both devices go offline and edit the same patient.
+  // Both devices go offline and edit the same patient: village on both (a real clash),
+  // phone only on A and age only on B (these must merge without asking anyone).
   await ctxA.setOffline(true);
   await ctxB.setOffline(true);
-  await editVillage(a, "Kheri Kalan");
-  await editVillage(b, "Kheri Khurd");
+  await edit(a, { Village: "Kheri Kalan", Phone: "9000000001" });
+  await edit(b, { Village: "Kheri Khurd", "Age (years)": "33" });
 
   await ctxA.setOffline(false);
   await expect(badge(a)).toHaveText("Synced", { timeout: 15_000 });
@@ -80,28 +81,42 @@ test("concurrent offline edits on two devices raise a conflict that the user res
   await expect(b.getByText("changed on another device")).toBeVisible();
 
   await badge(b).click();
-  const row = b.locator("tr", { hasText: "village" });
-  await expect(row).toContainText("Kheri Khurd");
-  await expect(row).toContainText("Kheri Kalan");
-  await b.getByRole("button", { name: "Keep mine" }).click();
+  await expect(b.locator(".conflict")).toContainText("1 field needs a decision, 2 merge automatically");
+  await b.getByRole("link", { name: "Review & resolve" }).click();
+
+  const village = b.getByRole("radiogroup", { name: "Village" });
+  await expect(village).toContainText("Kheri Khurd");
+  await expect(village).toContainText("Kheri Kalan");
+  const apply = b.getByRole("button", { name: "Apply merge" });
+  await expect(apply).toBeDisabled(); // the clash must be decided first
+  await expect(b.getByText("Merged automatically (2)")).toBeVisible();
+  await village.getByText("This device").click();
+  await b.screenshot({ path: "test-results/conflict-resolver.png", fullPage: true });
+  await apply.click();
   await expect(badge(b)).toHaveText("Synced", { timeout: 15_000 });
 
-  // Device A receives the resolved version.
+  // The decision is visible from the server's audit log.
+  await expect(b.locator(".resolved-item").first()).toContainText("village: this device");
+  await expect(b.locator(".resolved-item").first()).toContainText("phone: server");
+
+  // Device A receives the merged record: B's village and age, A's phone.
   await syncNow(a);
   await a.getByText("Ravi Shankar").click();
   await expect(a.getByLabel("Village")).toHaveValue("Kheri Khurd");
+  await expect(a.getByLabel("Phone")).toHaveValue("9000000001");
+  await expect(a.getByLabel("Age (years)")).toHaveValue("33");
 });
+
+async function edit(page: Page, fields: Record<string, string>) {
+  await page.getByRole("button", { name: "Edit" }).click();
+  for (const [label, value] of Object.entries(fields)) await page.getByLabel(label).fill(value);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
+}
 
 async function syncNow(page: Page) {
   await badge(page).click();
   await page.getByRole("button", { name: "Sync now" }).click();
   await expect(badge(page)).toHaveText("Synced", { timeout: 15_000 });
   await page.getByRole("link", { name: "HCare" }).click();
-}
-
-async function editVillage(page: Page, village: string) {
-  await page.getByRole("button", { name: "Edit" }).click();
-  await page.getByLabel("Village").fill(village);
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
 }

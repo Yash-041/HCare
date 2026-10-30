@@ -152,6 +152,8 @@ export interface OutboxOp {
   base_version: number;
   data: unknown | null;
   resolves_conflict_id?: string | null;
+  /** Per-field decisions of a conflict resolution, recorded in the server audit log. */
+  resolution?: Record<string, string> | null;
   status: OutboxStatus;
   /** Once an op has left the device its payload is frozen: the server may already have applied it. */
   sent_once: boolean;
@@ -281,6 +283,7 @@ export interface WireOp {
   data: unknown | null;
   client_ts?: string;
   resolves_conflict_id?: string | null;
+  resolution?: Record<string, string> | null;
 }
 
 export interface OpResult {
@@ -336,6 +339,8 @@ export interface ConflictOut {
   current_deleted: boolean;
   created_at: string;
   resolved_at: string | null;
+  resolved_by?: string | null;
   resolution_op_id: string | null;
+  resolution?: Record<string, string> | null;
   superseded_by: string | null;
 }

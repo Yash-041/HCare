@@ -122,6 +122,8 @@ export async function resolveConflict(
   actor: Actor,
   conflict: ConflictOut,
   resolution: Resolution,
+  /** Per-field decisions, sent along for the server's audit log. */
+  decisions?: Record<string, string>,
 ): Promise<void> {
   const table = db.records(conflict.entity);
   await db.transaction("rw", table, db.outbox, db.conflicts, async () => {
@@ -153,6 +155,7 @@ export async function resolveConflict(
       base_version: conflict.current_version,
       data: isDelete ? null : data,
       resolves_conflict_id: conflict.id,
+      resolution: decisions ?? (isDelete ? { record: "delete" } : null),
       status: "pending",
       sent_once: false,
       retry_count: 0,

@@ -203,6 +203,12 @@ def _conflict_out(db: Session, c: Conflict) -> ConflictOut:
         else None
     )
     current = db.get(Record, {"entity": c.entity, "id": c.entity_id})
+    resolution = None
+    if c.status == "resolved" and c.resolution_op_id:
+        entry = db.execute(
+            select(AuditLog).where(AuditLog.op_id == c.resolution_op_id, AuditLog.action == "resolve_conflict")
+        ).scalar_one_or_none()
+        resolution = (entry.details or {}).get("resolution") if entry else None
     return ConflictOut(
         id=c.id,
         entity=c.entity,
@@ -224,6 +230,8 @@ def _conflict_out(db: Session, c: Conflict) -> ConflictOut:
         current_deleted=current.deleted,
         created_at=c.created_at,
         resolved_at=c.resolved_at,
+        resolved_by=c.resolved_by,
         resolution_op_id=c.resolution_op_id,
+        resolution=resolution,
         superseded_by=c.superseded_by,
     )

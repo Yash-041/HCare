@@ -1,10 +1,10 @@
 import { useLiveQuery } from "dexie-react-hooks";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../app/AppContext";
 import { useConnectivity, useSyncState } from "../app/hooks";
 import { formatValue, threeWayDiff } from "../lib/diff";
-import { resolveConflict, type Resolution } from "../lib/repo";
+import { planMerge } from "../lib/merge";
 import type { ConflictOut, LocalRecord } from "../lib/types";
 
 function recordLabel(rec: LocalRecord | undefined, fallback: string): string {
@@ -63,6 +63,8 @@ export function SyncPage() {
         )}
       </section>
 
+      <ResolvedHistory />
+
       <section className="card">
         <h3>Outbox {outbox?.length ? `(${outbox.length})` : ""}</h3>
         {outbox?.length ? (
@@ -111,27 +113,27 @@ export function SyncPage() {
 }
 
 function ConflictCard({ conflict }: { conflict: ConflictOut }) {
-  const { db, actor, scheduler } = useApp();
+  const { db } = useApp();
   const local = useLiveQuery(() => db.records(conflict.entity).get(conflict.entity_id), [db, conflict]);
-  const [busy, setBusy] = useState(false);
 
   // "Mine" is the device's latest local state, which may include edits made after the conflict.
   const mineDeleted = local?.deleted ?? conflict.local_deleted;
   const mine = local?.data ?? conflict.local_data;
   const diffs = threeWayDiff(conflict.base_data, mine, conflict.current_data);
-
-  async function resolve(resolution: Resolution) {
-    setBusy(true);
-    try {
-      await resolveConflict(db, actor, conflict, resolution);
-      await scheduler.syncNow();
-    } finally {
-      setBusy(false);
-    }
+  const plan = planMerge(conflict.base_data, mine, conflict.current_data);
+  const clashes = plan.filter((p) => p.status === "clash").length;
+  const awaitingSync = useLiveQuery(
+    async () => (await db.outbox.where("entity_id").equals(conflict.entity_id).toArray()).some((o) => o.resolves_conflict_id === conflict.id),
+    [db, conflict],
+  );
+  if (awaitingSync) {
+    return (
+      <div className="conflict">
+        <strong>{recordLabel(local, conflict.entity_id.slice(0, 8))}</strong>
+        <span className="muted small">Resolved on this device; waiting to sync.</span>
+      </div>
+    );
   }
-
-  const keepMine: Resolution = mineDeleted ? { kind: "delete" } : { kind: "data", data: mine };
-  const keepServer: Resolution = conflict.current_deleted ? { kind: "delete" } : { kind: "data", data: conflict.current_data };
 
   return (
     <div className="conflict">
@@ -176,14 +178,59 @@ function ConflictCard({ conflict }: { conflict: ConflictOut }) {
         </table>
       </div>
       <div className="actions">
-        <button disabled={busy} onClick={() => void resolve(keepMine)}>
-          Keep mine
-        </button>
-        <button disabled={busy} className="secondary" onClick={() => void resolve(keepServer)}>
-          Keep server
-        </button>
-        <span className="muted small">Field-by-field merge: Phase 6</span>
+        <Link to={`/sync/conflicts/${conflict.id}`} className="button">
+          Review &amp; resolve
+        </Link>
+        <span className="muted small">
+          {mineDeleted !== conflict.current_deleted
+            ? "Deleted on one device, edited on the other"
+            : `${clashes} field${clashes === 1 ? "" : "s"} need${clashes === 1 ? "s" : ""} a decision, ${plan.length - clashes} merge${plan.length - clashes === 1 ? "s" : ""} automatically`}
+        </span>
       </div>
     </div>
+  );
+}
+
+/** Conflicts this device resolved, with the per-field decisions from the server's audit log. */
+function ResolvedHistory() {
+  const { api, deviceId } = useApp();
+  const connectivity = useConnectivity();
+  const { lastSyncAt } = useSyncState();
+  const [items, setItems] = useState<ConflictOut[] | null>(null);
+  // Refetch after every successful sync: a resolution only appears once it reached the server.
+  useEffect(() => {
+    if (connectivity !== "online") return;
+    let cancelled = false;
+    api
+      .listConflicts(deviceId, "resolved")
+      .then((r) => !cancelled && setItems(r.slice(-10).reverse()))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [api, deviceId, connectivity, lastSyncAt]);
+
+  if (!items?.length) return null;
+  return (
+    <section className="card">
+      <h3>Recently resolved</h3>
+      <p className="muted small">From the server's tamper-evident audit log.</p>
+      <ul className="list">
+        {items.map((c) => (
+          <li key={c.id} className="list-item resolved-item">
+            <div>
+              <strong>{c.entity}</strong> <span className="muted small">resolved {c.resolved_at ? new Date(c.resolved_at).toLocaleString() : ""}</span>
+              <div className="reasons">
+                {Object.entries(c.resolution ?? {}).map(([field, side]) => (
+                  <span key={field} className="chip chip-match">
+                    {field}: {side === "theirs" ? "server" : side === "mine" ? "this device" : side === "both" ? "combined" : side}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

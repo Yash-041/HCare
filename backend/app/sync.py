@@ -159,6 +159,7 @@ def _apply(db: Session, counter: SyncCounter, user: User, device_id: str, op: Sy
         resolving.resolved_by = user.id
         resolving.resolution_op_id = op_id
         details["resolved_conflict_id"] = resolving.id
+        details["resolution"] = op.resolution or {}
         action = "resolve_conflict"
     audit.append(db, **audit_ctx, action=action, version=rec.version, details=details)
     return OpResult(op_id=op_id, status="applied", version=rec.version)

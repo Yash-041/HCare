@@ -206,6 +206,9 @@ class SyncOp(BaseModel):
     data: dict[str, Any] | None = None
     client_ts: datetime | None = None
     resolves_conflict_id: str | None = None
+    # For conflict resolutions: which side won per field, e.g. {"village": "theirs",
+    # "allergies": "both"}. Recorded in the audit log so the decision is verifiable.
+    resolution: dict[str, Literal["mine", "theirs", "both", "edited", "delete"]] | None = Field(default=None, max_length=200)
 
 
 class PushRequest(BaseModel):
@@ -271,7 +274,10 @@ class ConflictOut(BaseModel):
     current_deleted: bool
     created_at: datetime
     resolved_at: datetime | None
+    resolved_by: str | None = None
     resolution_op_id: str | None
+    # Per-field decisions of the resolution (from the audit log), once resolved.
+    resolution: dict[str, str] | None = None
     superseded_by: str | None
 
 

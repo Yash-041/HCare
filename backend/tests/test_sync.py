@@ -128,6 +128,41 @@ def test_field_merge_resolution_is_new_version_and_closes_conflict(client, asha,
     assert get_record(client, asha, pid)["data"]["village"] == "Kheri"
 
 
+def test_field_decisions_of_a_resolution_are_audited_and_visible(client, asha, doctor, admin):
+    pid = new_id()
+    push(client, asha, [op("patient", pid, patient_data())])
+    push(client, asha, [op("patient", pid, patient_data(phone="9000000001"), base_version=1)])
+    [b] = push(client, doctor, [op("patient", pid, patient_data(village="Kheri"), base_version=1)], "device-B")
+
+    decisions = {"phone": "theirs", "village": "mine"}
+    resolution = op(
+        "patient", pid, patient_data(phone="9000000001", village="Kheri"), base_version=2,
+        resolves_conflict_id=b["conflict_id"], resolution=decisions,
+    )
+    [r] = push(client, doctor, [resolution], "device-B")
+    assert r["status"] == "applied"
+
+    c = client.get(f"/sync/conflicts/{b['conflict_id']}", headers=asha).json()
+    assert c["status"] == "resolved"
+    assert c["resolution"] == decisions
+    assert c["resolved_by"]  # who decided
+    entry = next(e for e in client.get(f"/audit?entity_id={pid}", headers=admin).json() if e["action"] == "resolve_conflict")
+    assert entry["details"]["resolution"] == decisions
+    assert entry["details"]["resolved_conflict_id"] == b["conflict_id"]
+    assert client.get("/audit/verify", headers=admin).json()["ok"] is True
+
+
+def test_resolution_decisions_are_validated(client, asha, doctor):
+    pid = new_id()
+    push(client, asha, [op("patient", pid, patient_data())])
+    r = client.post(
+        "/sync/push",
+        json={"device_id": "d", "ops": [op("patient", pid, patient_data(), base_version=1, resolution={"village": "whatever"})]},
+        headers=doctor,
+    )
+    assert r.status_code == 422
+
+
 def test_stale_resolution_supersedes_conflict(client, asha, doctor):
     pid = new_id()
     push(client, asha, [op("patient", pid, patient_data())])

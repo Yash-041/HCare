@@ -93,8 +93,8 @@ export class ApiClient {
     return this.request<PullResponse>("GET", `/sync/pull?since=${since}&limit=${limit}`);
   }
 
-  listConflicts(deviceId: string) {
-    return this.request<ConflictOut[]>("GET", `/sync/conflicts?status=open&device_id=${encodeURIComponent(deviceId)}`);
+  listConflicts(deviceId: string, status: "open" | "resolved" = "open") {
+    return this.request<ConflictOut[]>("GET", `/sync/conflicts?status=${status}&device_id=${encodeURIComponent(deviceId)}`);
   }
 
   getConflict(id: string) {
