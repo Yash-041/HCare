@@ -1,0 +1,4 @@
+# Store text with LF so the Dockerfile and scripts work on every OS.
+* text=auto eol=lf
+*.wav binary
+*.png binary

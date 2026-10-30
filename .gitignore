@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.db
+
+# Node / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test output
+test-results/
+playwright-report/
+
+# Local config & secrets
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hcare
+      POSTGRES_PASSWORD: hcare
+      POSTGRES_DB: hcare
+    ports:
+      # Uncommon host port: laptops often already run PostgreSQL on 5432 (or other
+      # projects' containers on 5433). The backend container uses db:5432 internally.
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hcare"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://hcare:hcare@db:5432/hcare
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-in-production-0000}
+      SEED_DEMO_USERS: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,153 @@
+/**
+ * Clinical vocabulary for rule-based extraction: English, romanized Hindi (Hinglish) and
+ * Devanagari. Text is normalized before matching (lowercase, Devanagari digits -> ASCII,
+ * nukta removed, chandrabindu -> anusvara), so list each term in that normalized form.
+ */
+
+/** canonical symptom -> surface forms */
+export const SYMPTOMS: Record<string, string[]> = {
+  // Colloquial forms the small embedding model can't link to "fever" (scored 0.25) live here.
+  fever: ["fever", "febrile", "pyrexia", "high temperature", "body feels hot", "badan garam", "bukhar", "bukhaar", "बुखार", "ज्वर", "taap", "बदन गरम"],
+  cough: ["cough", "coughing", "khansi", "khaansi", "khasi", "खांसी", "खासी"],
+  "runny nose": ["runny nose", "cold", "coryza", "zukam", "jukam", "nazla", "जुकाम", "सर्दी जुकाम", "नाक बहना"],
+  headache: ["headache", "head ache", "sir dard", "sar dard", "sir mein dard", "सिर दर्द", "सिरदर्द", "सर दर्द"],
+  "body ache": ["body ache", "body pain", "myalgia", "badan dard", "badan mein dard", "बदन दर्द", "शरीर में दर्द"],
+  "abdominal pain": ["abdominal pain", "stomach pain", "stomach ache", "pain in abdomen", "pet dard", "pet mein dard", "पेट दर्द", "पेट में दर्द"],
+  vomiting: ["vomiting", "vomits", "vomit", "emesis", "ulti", "ultiyan", "उल्टी", "उलटी"],
+  nausea: ["nausea", "nauseous", "ji machalna", "ji michlana", "जी मचलना", "मतली"],
+  diarrhoea: ["diarrhoea", "diarrhea", "loose motion", "loose motions", "loose stools", "dast", "दस्त"],
+  breathlessness: [
+    "breathlessness",
+    "shortness of breath",
+    "difficulty breathing",
+    "difficulty in breathing",
+    "breathing difficulty",
+    "saans phoolna",
+    "saans lene mein taklif",
+    "सांस फूलना",
+    "सांस लेने में तकलीफ",
+  ],
+  "chest pain": ["chest pain", "pain in chest", "seene mein dard", "chhati mein dard", "सीने में दर्द", "छाती में दर्द"],
+  weakness: ["weakness", "fatigue", "tiredness", "lethargy", "kamzori", "kamjori", "thakan", "कमजोरी", "थकान"],
+  dizziness: ["dizziness", "giddiness", "vertigo", "chakkar", "चक्कर"],
+  "sore throat": ["sore throat", "throat pain", "gale mein dard", "gala kharab", "गले में दर्द", "गला खराब"],
+  rash: ["rash", "rashes", "skin eruption", "daane", "दाने", "चकत्ते"],
+  itching: ["itching", "pruritus", "khujli", "खुजली"],
+  "burning urination": ["burning urination", "burning micturition", "dysuria", "peshab mein jalan", "पेशाब में जलन"],
+  "joint pain": ["joint pain", "joint pains", "arthralgia", "jodon mein dard", "जोड़ों में दर्द", "जोडों में दर्द"],
+  swelling: ["swelling", "oedema", "edema", "sujan", "soojan", "सूजन"],
+  "loss of appetite": ["loss of appetite", "poor appetite", "bhookh nahi", "bhukh nahi", "भूख नहीं", "भूख कम"],
+  "back pain": ["back pain", "backache", "kamar dard", "कमर दर्द"],
+  "ear pain": ["ear pain", "earache", "kaan dard", "कान दर्द"],
+  "eye redness": ["red eye", "red eyes", "eye redness", "aankh lal", "आंख लाल"],
+  "bleeding": ["bleeding", "khoon aana", "खून आना"],
+  convulsions: ["convulsions", "seizure", "seizures", "fits", "daura", "दौरा"],
+  "weight loss": ["weight loss", "losing weight", "vajan kam", "वजन कम"],
+};
+
+/** canonical medicine -> surface forms (generic + common Indian brand names) */
+export const MEDICINES: Record<string, string[]> = {
+  Paracetamol: ["paracetamol", "acetaminophen", "pcm", "crocin", "dolo", "calpol", "पैरासिटामोल", "पेरासिटामोल", "क्रोसिन"],
+  Ibuprofen: ["ibuprofen", "brufen", "combiflam"],
+  Diclofenac: ["diclofenac", "voveran"],
+  Aspirin: ["aspirin", "ecosprin", "disprin"],
+  Amoxicillin: ["amoxicillin", "amoxycillin", "amoxil", "mox"],
+  "Amoxicillin-Clavulanate": ["amoxicillin clavulanate", "co-amoxiclav", "augmentin", "clavam"],
+  Azithromycin: ["azithromycin", "azithral", "azee", "azithro"],
+  Ciprofloxacin: ["ciprofloxacin", "cipro", "ciplox"],
+  Doxycycline: ["doxycycline", "doxy"],
+  Metronidazole: ["metronidazole", "flagyl", "metrogyl"],
+  Cotrimoxazole: ["cotrimoxazole", "co-trimoxazole", "septran", "bactrim"],
+  Cefixime: ["cefixime", "taxim-o", "zifi"],
+  Ceftriaxone: ["ceftriaxone", "monocef"],
+  Cetirizine: ["cetirizine", "cetzine", "okacet"],
+  Levocetirizine: ["levocetirizine", "levocet"],
+  Chlorpheniramine: ["chlorpheniramine", "cpm", "piriton"],
+  Montelukast: ["montelukast", "montair"],
+  Salbutamol: ["salbutamol", "albuterol", "asthalin"],
+  ORS: ["ors", "o.r.s", "oral rehydration solution", "oral rehydration salts", "electral"],
+  Zinc: ["zinc", "zinc sulphate", "zinc sulfate"],
+  "Iron + Folic acid": ["ifa", "iron folic acid", "iron tablet", "iron tablets", "ferrous sulphate", "ferrous sulfate", "आयरन"],
+  "Folic acid": ["folic acid"],
+  Calcium: ["calcium", "shelcal"],
+  Albendazole: ["albendazole", "zentel"],
+  Ivermectin: ["ivermectin"],
+  Omeprazole: ["omeprazole", "omez"],
+  Pantoprazole: ["pantoprazole", "pantop", "pan-d", "pan 40"],
+  Ranitidine: ["ranitidine", "rantac", "aciloc"],
+  Ondansetron: ["ondansetron", "emeset", "ondem"],
+  Domperidone: ["domperidone", "domstal"],
+  Metformin: ["metformin", "glycomet"],
+  Glimepiride: ["glimepiride", "amaryl"],
+  Insulin: ["insulin"],
+  Amlodipine: ["amlodipine", "amlong", "amlo"],
+  Atenolol: ["atenolol", "aten"],
+  Losartan: ["losartan", "losar"],
+  Telmisartan: ["telmisartan", "telma"],
+  Enalapril: ["enalapril"],
+  Hydrochlorothiazide: ["hydrochlorothiazide", "hctz"],
+  Atorvastatin: ["atorvastatin", "atorva"],
+  Chloroquine: ["chloroquine"],
+  "Artemether-Lumefantrine": ["artemether lumefantrine", "artemether", "coartem"],
+  Primaquine: ["primaquine"],
+  Isoniazid: ["isoniazid", "inh"],
+  Rifampicin: ["rifampicin", "rifampin"],
+  Prednisolone: ["prednisolone", "wysolone"],
+  Dexamethasone: ["dexamethasone", "dexona"],
+};
+
+/** Substances commonly reported as allergies (beyond medicines above). */
+export const ALLERGENS: Record<string, string[]> = {
+  Penicillin: ["penicillin", "penicillins", "पेनिसिलिन"],
+  "Sulfa drugs": ["sulfa", "sulpha", "sulfonamide", "sulphonamide"],
+  NSAIDs: ["nsaid", "nsaids"],
+  Peanuts: ["peanut", "peanuts", "moongphali"],
+  Dust: ["dust", "dhool", "धूल"],
+  Pollen: ["pollen"],
+  Seafood: ["seafood", "shellfish", "fish"],
+  Eggs: ["egg", "eggs", "anda"],
+  Milk: ["milk", "dairy", "doodh"],
+  Latex: ["latex"],
+};
+
+/** canonical lab test -> surface forms (mostly from scanned reports) */
+export const LAB_TESTS: Record<string, string[]> = {
+  Haemoglobin: ["haemoglobin", "hemoglobin", "hb", "hgb"],
+  "Serum creatinine": ["serum creatinine", "s. creatinine", "s.creatinine", "creatinine"],
+  "Blood urea": ["blood urea", "urea", "bun"],
+  Platelets: ["platelet count", "platelets", "plt"],
+  "Total WBC count": ["total leucocyte count", "total leukocyte count", "tlc", "wbc count", "wbc", "total wbc"],
+  "RBC count": ["rbc count", "rbc"],
+  HbA1c: ["hba1c", "glycated haemoglobin", "glycated hemoglobin"],
+  TSH: ["tsh"],
+  "Total bilirubin": ["total bilirubin", "s. bilirubin", "bilirubin"],
+  "SGPT (ALT)": ["sgpt", "alt"],
+  "SGOT (AST)": ["sgot", "ast"],
+  Sodium: ["sodium", "na+"],
+  Potassium: ["potassium", "k+"],
+  "Total cholesterol": ["total cholesterol", "cholesterol"],
+  Triglycerides: ["triglycerides"],
+  "Uric acid": ["uric acid"],
+  ESR: ["esr"],
+  CRP: ["crp", "c-reactive protein"],
+  "Malaria antigen": ["malaria antigen", "malaria parasite", "mp", "rdt malaria"],
+  "Dengue NS1": ["dengue ns1", "ns1 antigen", "ns1"],
+  Widal: ["widal"],
+  HBsAg: ["hbsag"],
+  HIV: ["hiv"],
+};
+
+export const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, a: 1, an: 1, couple: 2, few: 3,
+  ek: 1, do: 2, teen: 3, char: 4, chaar: 4, panch: 5, paanch: 5, chhe: 6, che: 6, saat: 7, aath: 8, nau: 9, das: 10,
+  "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5, "छह": 6, "छः": 6, "सात": 7, "आठ": 8, "नौ": 9, "दस": 10,
+};
+
+/** duration unit surface form -> canonical (singular) */
+export const DURATION_UNITS: Record<string, "day" | "week" | "month" | "year"> = {
+  day: "day", days: "day", din: "day", dino: "day", dinon: "day", "दिन": "day", "दिनों": "day",
+  week: "week", weeks: "week", hafta: "week", hafte: "week", hafton: "week", "हफ्ता": "week", "हफ्ते": "week", "सप्ताह": "week",
+  month: "month", months: "month", mahina: "month", mahine: "month", "महीना": "month", "महीने": "month",
+  year: "year", years: "year", saal: "year", "साल": "year", "वर्ष": "year",
+};
