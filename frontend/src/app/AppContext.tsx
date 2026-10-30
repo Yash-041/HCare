@@ -1,18 +1,37 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiClient } from "../lib/api";
-import { login as doLogin, logout as doLogout, restoreSession, type LoginMode } from "../lib/auth";
+import { login as doLogin, logout as doLogout, restoreSession, unlock as doUnlock, type LoginMode, type SessionSecrets } from "../lib/auth";
+import { encryptExistingData } from "../lib/crypto/migrate";
+import { wipeDevice } from "../lib/crypto/wipe";
 import { HCareDB } from "../lib/db";
-import { SearchService } from "../lib/search/service";
 import type { Actor } from "../lib/repo";
+import { purgeOldRecordings } from "../lib/retention";
+import { SearchService } from "../lib/search/service";
 import { SyncEngine } from "../lib/sync/engine";
 import { SyncScheduler } from "../lib/sync/scheduler";
 import type { CachedSession } from "../lib/types";
 
-// One database, search index and API client per app instance.
-const db = new HCareDB();
+/** Lock automatically after this long without interaction. */
+const AUTO_LOCK_MS = 15 * 60_000;
+
+// One database, search index and API client per app instance. requireEncryption: nothing
+// is ever written to IndexedDB unencrypted; writes while locked fail instead.
+const db = new HCareDB("hcare", { requireEncryption: true });
 const searchService = new SearchService(db);
-let token: string | null = null;
-const api = new ApiClient({ baseUrl: import.meta.env.VITE_API_URL ?? "/api", getToken: () => token });
+let secrets: SessionSecrets | null = null;
+
+async function wipeAndRestart() {
+  await wipeDevice(db);
+  location.replace("/");
+}
+
+const api = new ApiClient({
+  baseUrl: import.meta.env.VITE_API_URL ?? "/api",
+  getToken: () => secrets?.token ?? null,
+  getTransportKey: () => secrets?.transportKey ?? null,
+  // The server says this device was reported lost.
+  onDeviceWipe: () => void wipeAndRestart(),
+});
 
 interface AppCtx {
   db: HCareDB;
@@ -24,6 +43,8 @@ interface AppCtx {
   scheduler: SyncScheduler;
   search: SearchService;
   signOut: () => Promise<void>;
+  lockNow: () => void;
+  wipe: () => Promise<void>;
 }
 
 interface Boot {
@@ -41,16 +62,20 @@ export function useApp(): AppCtx {
 }
 
 export type SignIn = (username: string, password: string) => Promise<LoginMode>;
+export type Unlock = (password: string) => Promise<void>;
 
 export function AppProvider({
   signedOut,
+  locked,
   children,
 }: {
   signedOut: (signIn: SignIn) => ReactNode;
+  locked: (session: CachedSession, unlock: Unlock, switchUser: () => void) => ReactNode;
   children: ReactNode;
 }) {
   const [boot, setBoot] = useState<Boot | null>(null);
   const [session, setSession] = useState<CachedSession | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,46 +83,89 @@ export function AppProvider({
       // Ask the browser not to evict our data under storage pressure.
       await navigator.storage?.persist?.().catch(() => false);
       const deviceId = await db.deviceId();
-      // Hooks must be attached before any record is written this session.
-      await searchService.start();
       const restored = await restoreSession(db);
       const engine = new SyncEngine(db, api, deviceId);
       if (cancelled) return;
-      token = restored?.token ?? null;
       setSession(restored);
       setBoot({ deviceId, engine, scheduler: new SyncScheduler(engine, api) });
     })();
+    const off = db.vault.onChange((isUnlocked) => {
+      setUnlocked(isUnlocked);
+      if (!isUnlocked) secrets = null;
+    });
     return () => {
       cancelled = true;
+      off();
     };
   }, []);
 
+  // Everything that touches patient data starts only once the data key is available.
   useEffect(() => {
-    if (!boot || !session) return;
-    boot.scheduler.start();
-    return () => boot.scheduler.stop();
-  }, [boot, session]);
+    if (!boot || !session || !unlocked) return;
+    let stopped = false;
+    void (async () => {
+      await encryptExistingData(db);
+      await searchService.start();
+      if (!stopped) boot.scheduler.start();
+    })();
+    // Data minimisation: drop recordings of verified, synced visits after the retention period.
+    const off = boot.engine.subscribe((s) => {
+      if (s.phase === "idle" && s.lastSyncAt) void purgeOldRecordings(db);
+    });
+    return () => {
+      stopped = true;
+      off();
+      boot.scheduler.stop();
+    };
+  }, [boot, session, unlocked]);
+
+  // Auto-lock after inactivity: a phone left on a desk does not stay open.
+  useEffect(() => {
+    if (!unlocked) return;
+    let timer = setTimeout(() => db.vault.lock(), AUTO_LOCK_MS);
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => db.vault.lock(), AUTO_LOCK_MS);
+    };
+    const events = ["pointerdown", "keydown", "touchstart"] as const;
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [unlocked]);
 
   const signIn = useCallback<SignIn>(
     async (username, password) => {
-      const { session: s, mode } = await doLogin(api, db, username, password);
-      token = s.token;
-      if (mode === "online") boot?.engine.clearAuthRequired();
-      setSession(s);
-      return mode;
+      const r = await doLogin(api, db, username, password);
+      secrets = r.secrets;
+      if (r.mode === "online") boot?.engine.clearAuthRequired();
+      setSession(r.session);
+      setUnlocked(true);
+      return r.mode;
     },
     [boot],
   );
 
+  const unlock = useCallback<Unlock>(
+    async (password) => {
+      if (!session) return;
+      const r = await doUnlock(db, session, password);
+      secrets = r.secrets;
+      setUnlocked(true);
+    },
+    [session],
+  );
+
   const signOut = useCallback(async () => {
-    await doLogout(db);
-    token = null;
+    await doLogout(db, secrets ? api : undefined);
+    secrets = null;
     setSession(null);
   }, []);
 
   const value = useMemo<AppCtx | null>(
     () =>
-      boot && session
+      boot && session && unlocked
         ? {
             db,
             api,
@@ -108,12 +176,15 @@ export function AppProvider({
             scheduler: boot.scheduler,
             search: searchService,
             signOut,
+            lockNow: () => db.vault.lock(),
+            wipe: wipeAndRestart,
           }
         : null,
-    [boot, session, signOut],
+    [boot, session, unlocked, signOut],
   );
 
   if (!boot) return <div className="splash">Loading…</div>;
-  if (!value) return <>{signedOut(signIn)}</>;
+  if (!session) return <>{signedOut(signIn)}</>;
+  if (!value) return <>{locked(session, unlock, () => void signOut())}</>;
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

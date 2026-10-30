@@ -50,7 +50,9 @@ export function useSyncBadge(): { kind: BadgeKind; label: string } {
   if (rejected > 0) return { kind: "error", label: `Needs fix · ${rejected}` };
   if (state.phase === "auth-required") return { kind: "error", label: "Sign in to sync" };
   if (connectivity !== "online") return { kind: "offline", label: pending ? `Offline · ${pending} pending` : "Offline" };
-  if (state.phase === "syncing") return { kind: "syncing", label: "Syncing…" };
+  // "Synced" only after a sync has actually completed this session; right after sign-in
+  // nothing may have been downloaded yet.
+  if (state.phase === "syncing" || !state.lastSyncAt) return { kind: "syncing", label: "Syncing…" };
   if (pending > 0) return { kind: "pending", label: `Pending · ${pending}` };
   return { kind: "synced", label: "Synced" };
 }

@@ -121,6 +121,36 @@ class AuditLog(Base):
     hash: Mapped[str] = mapped_column(String(64))
 
 
+class Device(Base):
+    """A phone/tablet. `secret` lets any authorised user who signs in online unlock the
+    device's encrypted local data (shared clinic tablets); it is never stored on the device."""
+
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    secret: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active | wipe_requested | wiped
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    wipe_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    wipe_requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class AuthSession(Base):
+    """One per login: lets tokens be revoked, and holds that session's payload key."""
+
+    __tablename__ = "auth_sessions"
+
+    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    device_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    transport_key: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class SyncCounter(Base):
     """Single row. Locked FOR UPDATE at the start of every write to serialize the
     change sequence and the audit hash chain."""

@@ -6,7 +6,7 @@ Offline-first PWA for rural health workers: voice notes and document scans becom
 |---|---|
 | `backend/` | FastAPI, SQLAlchemy, PostgreSQL. Contains the sync engine (idempotent ops, versioning, conflicts, hash-chained audit log). |
 | `frontend/` | React, TypeScript, Vite PWA, Dexie (IndexedDB). Contains the offline app shell and the client sync engine (outbox, retries, conflicts). |
-| `docs/` | [SYNC_ENGINE.md](docs/SYNC_ENGINE.md) (core deliverable: guarantees and conflict workflow) · [AI_PIPELINE.md](docs/AI_PIPELINE.md) · [PHASE1_DATA_MODEL.md](docs/PHASE1_DATA_MODEL.md) · [SETUP.md](docs/SETUP.md) |
+| `docs/` | [SYNC_ENGINE.md](docs/SYNC_ENGINE.md) (core deliverable: guarantees and conflict workflow) · [SECURITY.md](docs/SECURITY.md) · [AI_PIPELINE.md](docs/AI_PIPELINE.md) · [PHASE1_DATA_MODEL.md](docs/PHASE1_DATA_MODEL.md) · [SETUP.md](docs/SETUP.md) |
 
 **New laptop? Follow [docs/SETUP.md](docs/SETUP.md)** for step-by-step setup, offline demo, phone access, tests and troubleshooting.
 

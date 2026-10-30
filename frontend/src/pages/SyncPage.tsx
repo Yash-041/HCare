@@ -105,10 +105,47 @@ export function SyncPage() {
         )}
       </section>
 
+      <SecurityCard pending={outbox?.length ?? 0} />
+
       <section className="card muted small">
         Device <code>{deviceId}</code> · signed in as {session.username} ({session.user.role}) · pull cursor {cursor ?? 0}
       </section>
     </main>
+  );
+}
+
+function SecurityCard({ pending }: { pending: number }) {
+  const { lockNow, wipe, session } = useApp();
+  return (
+    <section className="card">
+      <h3>Security</h3>
+      <p className="small">
+        🔒 Patient data on this device is encrypted (AES-256-GCM) and opens only with a user's password. Sync payloads are encrypted on top of
+        HTTPS. The app locks itself after 15 minutes without use.
+      </p>
+      <div className="actions">
+        <button type="button" className="secondary" onClick={lockNow}>
+          Lock now
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={() => {
+            const warning = pending
+              ? `${pending} change(s) on this device have NOT been synced and will be lost.\n\n`
+              : "Everything on this device has been synced.\n\n";
+            if (prompt(`${warning}Erase all patient data from this device? Type WIPE to confirm.`) === "WIPE") void wipe();
+          }}
+        >
+          Wipe this device
+        </button>
+        {session.user.role === "admin" && (
+          <Link to="/admin/devices" className="link">
+            Manage devices (remote wipe)
+          </Link>
+        )}
+      </div>
+    </section>
   );
 }
 

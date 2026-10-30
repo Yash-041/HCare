@@ -24,8 +24,8 @@ test("on-device LLM adds grounded fields on top of the rules", async ({ baseURL 
   try {
     await page.goto("/");
     // Fresh server DB each run, but the persistent profile may still hold an old session.
-    if (await page.getByRole("button", { name: "Sign out" }).isVisible().catch(() => false)) {
-      await page.getByRole("button", { name: "Sign out" }).click();
+    if (await page.getByRole("button", { name: "Sign in as someone else" }).isVisible().catch(() => false)) {
+      await page.getByRole("button", { name: "Sign in as someone else" }).click();
     }
     await captureVoiceNote(page, "Kavita Rao");
     const f16 = await page.evaluate(async () => {

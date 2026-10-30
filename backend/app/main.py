@@ -9,24 +9,27 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import audit
-from .auth import create_token, current_user, hash_password, require_roles, verify_password
+from . import audit, transport
+from .auth import DEVICE_WIPE, create_session, current_user, deliver_wipe, hash_password, require_roles, verify_password
 from .config import settings
 from .db import Base, make_engine
-from .models import AuditLog, Conflict, Record, RecordVersion, SyncCounter, User
+from .models import AuditLog, AuthSession, Conflict, Device, Record, RecordVersion, SyncCounter, User
 from .schemas import (
     AuditEntryOut,
     AuditVerifyOut,
     ConflictOut,
     CreateUserRequest,
+    DeviceOut,
+    EncryptedPayload,
     LoginRequest,
     LoginResponse,
+    OpResult,
     PullResponse,
     PushRequest,
     PushResponse,
     UserOut,
 )
-from .sync import pull_changes, process_ops
+from .sync import process_op, pull_changes
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +64,11 @@ def _user_out(u: User) -> UserOut:
     return UserOut(id=u.id, username=u.username, role=u.role, full_name=u.full_name)
 
 
-def create_app(database_url: str | None = None, seed_demo_users: bool | None = None) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    seed_demo_users: bool | None = None,
+    require_encrypted_payloads: bool | None = None,
+) -> FastAPI:
     engine = make_engine(database_url or settings.database_url)
     Base.metadata.create_all(engine)
     Session_ = sessionmaker(engine, expire_on_commit=False)
@@ -69,6 +76,9 @@ def create_app(database_url: str | None = None, seed_demo_users: bool | None = N
 
     app = FastAPI(title="HCare Sync Server", version="0.1.0")
     app.state.sessionmaker = Session_
+    app.state.require_encrypted_payloads = (
+        settings.require_encrypted_payloads if require_encrypted_payloads is None else require_encrypted_payloads
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -87,16 +97,81 @@ def create_app(database_url: str | None = None, seed_demo_users: bool | None = N
     # ------------------------------------------------------------ auth
 
     @app.post("/auth/login", response_model=LoginResponse)
-    def login(body: LoginRequest, db: Session = Depends(get_db)):
-        user = db.execute(select(User).where(User.username == body.username)).scalar_one_or_none()
-        if user is None or not user.active or not verify_password(body.password, user.password_hash):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
-        token, ttl = create_token(user)
-        return LoginResponse(access_token=token, expires_in=ttl, user=_user_out(user))
+    def login(body: LoginRequest, request: Request):
+        with request.app.state.sessionmaker() as db, db.begin():
+            user = db.execute(select(User).where(User.username == body.username)).scalar_one_or_none()
+            if user is None or not user.active or not verify_password(body.password, user.password_hash):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid username or password")
+            now = datetime.now(timezone.utc)
+            device = None
+            if body.device_id:
+                device = db.get(Device, body.device_id)
+                if device is None:
+                    device = Device(id=body.device_id, secret=transport.new_key(), status="active", first_seen=now, last_seen=now)
+                    db.add(device)
+                elif device.status == "wipe_requested":
+                    deliver_wipe(db, device, user.id)
+                if device.status != "active":
+                    wiped = True
+                else:
+                    wiped = False
+                    device.last_seen, device.last_user_id = now, user.id
+            if body.device_id and wiped:
+                result = None
+            else:
+                token, ttl, session = create_session(db, user, body.device_id)
+                result = LoginResponse(
+                    access_token=token,
+                    expires_in=ttl,
+                    user=_user_out(user),
+                    transport_key=session.transport_key,
+                    device_key=device.secret if device else None,
+                )
+        if result is None:
+            raise DEVICE_WIPE
+        return result
+
+    @app.post("/auth/logout", status_code=204)
+    def logout(request: Request, _: User = Depends(current_user)):
+        with request.app.state.sessionmaker() as db, db.begin():
+            s = db.get(AuthSession, request.state.auth_session.jti)
+            s.revoked_at = datetime.now(timezone.utc)
 
     @app.get("/auth/me", response_model=UserOut)
     def me(user: User = Depends(current_user)):
         return _user_out(user)
+
+    # ------------------------------------------------------------ devices (admin)
+
+    @app.get("/admin/devices", response_model=list[DeviceOut])
+    def list_devices(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))):
+        users = {u.id: u.username for u in db.execute(select(User)).scalars()}
+        return [
+            DeviceOut(
+                id=d.id,
+                status=d.status,
+                first_seen=d.first_seen,
+                last_seen=d.last_seen,
+                last_user=users.get(d.last_user_id or ""),
+                wipe_requested_at=d.wipe_requested_at,
+            )
+            for d in db.execute(select(Device).order_by(Device.last_seen.desc())).scalars()
+        ]
+
+    @app.post("/admin/devices/{device_id}/wipe", status_code=202)
+    def request_wipe(device_id: str, request: Request, admin: User = Depends(require_roles("admin"))):
+        """Report a device lost: its next contact with the server makes it erase its local data."""
+        with request.app.state.sessionmaker() as db, db.begin():
+            db.execute(select(SyncCounter).where(SyncCounter.id == 1).with_for_update()).scalar_one()
+            device = db.get(Device, device_id)
+            if device is None:
+                raise HTTPException(404, "device not found")
+            if device.status == "active":
+                device.status = "wipe_requested"
+                device.wipe_requested_at = datetime.now(timezone.utc)
+                device.wipe_requested_by = admin.id
+                audit.append(db, user_id=admin.id, device_id=device_id, action="device_wipe_requested", details={})
+        return {"status": device.status}
 
     @app.post("/admin/users", response_model=UserOut, status_code=201)
     def create_user(body: CreateUserRequest, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))):
@@ -118,23 +193,59 @@ def create_app(database_url: str | None = None, seed_demo_users: bool | None = N
 
     # ------------------------------------------------------------ sync
 
+    def encrypting(request: Request) -> str | None:
+        """The session's payload key, if responses should be encrypted."""
+        wants = request.headers.get("x-payload-encryption") == "v1" or app.state.require_encrypted_payloads
+        return request.state.auth_session.transport_key if wants else None
+
     @app.post("/sync/push", response_model=PushResponse)
     def push(body: PushRequest, request: Request, user: User = Depends(current_user)):
-        results = process_ops(request.app.state.sessionmaker, user, body.device_id, body.ops)
+        key = request.state.auth_session.transport_key
+        results: list[OpResult] = []
+        for op in body.ops:
+            if op.data_enc is not None:
+                try:
+                    # AAD = op_id: a payload captured from one op can't be replayed as another.
+                    op = op.model_copy(update={"data": transport.decrypt(key, op.data_enc.model_dump(), str(op.op_id)), "data_enc": None})
+                except transport.PayloadError as e:
+                    results.append(OpResult(op_id=str(op.op_id), status="rejected", error=str(e)))
+                    continue
+            elif op.data is not None and app.state.require_encrypted_payloads:
+                results.append(OpResult(op_id=str(op.op_id), status="rejected", error="unencrypted payloads are not accepted"))
+                continue
+            results.append(process_op(request.app.state.sessionmaker, user, body.device_id, op))
         return PushResponse(results=results, server_time=datetime.now(timezone.utc))
 
     @app.get("/sync/pull", response_model=PullResponse)
     def pull(
+        request: Request,
         since: int = Query(0, ge=0),
         limit: int = Query(500, ge=1, le=settings.max_pull_limit),
         db: Session = Depends(get_db),
         _: User = Depends(current_user),
     ):
         changes, cursor, has_more = pull_changes(db, since, limit)
+        if key := encrypting(request):
+            for c in changes:
+                if c.data is not None:
+                    c.data_enc = EncryptedPayload(**transport.encrypt(key, c.data, f"{c.entity}:{c.id}:{c.version}"))
+                    c.data = None
         return PullResponse(changes=changes, next_cursor=cursor, has_more=has_more)
+
+    def seal_conflict(request: Request, out: ConflictOut) -> ConflictOut:
+        if key := encrypting(request):
+            enc = {}
+            for f in ("base_data", "local_data", "server_data", "current_data"):
+                v = getattr(out, f)
+                if v is not None:
+                    enc[f] = EncryptedPayload(**transport.encrypt(key, v, f"conflict:{out.id}:{f}"))
+                    setattr(out, f, None)
+            out.enc = enc
+        return out
 
     @app.get("/sync/conflicts", response_model=list[ConflictOut])
     def list_conflicts(
+        request: Request,
         status_: Literal["open", "resolved", "superseded", "all"] = Query("open", alias="status"),
         device_id: str | None = None,
         db: Session = Depends(get_db),
@@ -145,14 +256,14 @@ def create_app(database_url: str | None = None, seed_demo_users: bool | None = N
             q = q.where(Conflict.status == status_)
         if device_id:
             q = q.where(Conflict.device_id == device_id)
-        return [_conflict_out(db, c) for c in db.execute(q).scalars()]
+        return [seal_conflict(request, _conflict_out(db, c)) for c in db.execute(q).scalars()]
 
     @app.get("/sync/conflicts/{conflict_id}", response_model=ConflictOut)
-    def get_conflict(conflict_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    def get_conflict(conflict_id: str, request: Request, db: Session = Depends(get_db), _: User = Depends(current_user)):
         c = db.get(Conflict, conflict_id)
         if c is None:
             raise HTTPException(404, "conflict not found")
-        return _conflict_out(db, c)
+        return seal_conflict(request, _conflict_out(db, c))
 
     @app.get("/records/{entity}/{entity_id}/history")
     def record_history(entity: str, entity_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)):

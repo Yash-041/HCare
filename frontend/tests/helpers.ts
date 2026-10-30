@@ -1,6 +1,6 @@
 import { inject } from "vitest";
 import { ApiClient } from "../src/lib/api";
-import { loginOnline } from "../src/lib/auth";
+import { loginOnline, type SessionSecrets } from "../src/lib/auth";
 import { HCareDB } from "../src/lib/db";
 import { newId } from "../src/lib/ids";
 import type { Actor } from "../src/lib/repo";
@@ -49,13 +49,22 @@ export interface Device {
   deviceId: string;
 }
 
-export async function makeDevice(username = "asha", password = "asha1234"): Promise<Device> {
-  const db = new HCareDB(`test-${newId()}`);
+/**
+ * A simulated phone, configured like the app: encryption at rest required, the data key
+ * unlocked by signing in, and sync payloads encrypted with the session key.
+ */
+export async function makeDevice(username = "asha", password = "asha1234", existingDb?: HCareDB): Promise<Device> {
+  const db = existingDb ?? new HCareDB(`test-${newId()}`, { requireEncryption: true });
   const net = new FlakyNetwork();
-  let token: string | null = null;
-  const api = new ApiClient({ baseUrl: inject("apiUrl"), fetch: net.fetch, getToken: () => token });
-  const session = await loginOnline(api, db, username, password);
-  token = session.token;
+  let secrets: SessionSecrets | null = null;
+  const api = new ApiClient({
+    baseUrl: inject("apiUrl"),
+    fetch: net.fetch,
+    getToken: () => secrets?.token ?? null,
+    getTransportKey: () => secrets?.transportKey ?? null,
+  });
+  const { session, secrets: s } = await loginOnline(api, db, username, password);
+  secrets = s;
   const deviceId = await db.deviceId();
   // Deterministic jitter; tests move time forward explicitly instead of sleeping.
   const engine = new SyncEngine(db, api, deviceId, { random: () => 0.5 });

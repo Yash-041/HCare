@@ -9,6 +9,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { PatientPage } from "./pages/PatientPage";
 import { PatientsPage } from "./pages/PatientsPage";
 import { SyncPage } from "./pages/SyncPage";
+import { UnlockPage } from "./pages/UnlockPage";
+import { DevicesPage } from "./pages/DevicesPage";
 
 /** Remount per patient so form state never leaks between records. */
 function PatientRoute() {
@@ -20,7 +22,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <UpdatePrompt />
-      <AppProvider signedOut={(signIn) => <LoginPage signIn={signIn} />}>
+      <AppProvider
+        signedOut={(signIn) => <LoginPage signIn={signIn} />}
+        locked={(session, unlock, switchUser) => <UnlockPage session={session} unlock={unlock} switchUser={switchUser} />}
+      >
         <TopBar />
         <Routes>
           <Route path="/" element={<PatientsPage />} />
@@ -30,6 +35,7 @@ export default function App() {
           <Route path="/patients/:id/consultations/:cid" element={<ConsultationPage />} />
           <Route path="/sync" element={<SyncPage />} />
           <Route path="/sync/conflicts/:id" element={<ConflictPage />} />
+          <Route path="/admin/devices" element={<DevicesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppProvider>

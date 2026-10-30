@@ -1,4 +1,6 @@
 import Dexie, { type Table } from "dexie";
+import { encryptionMiddleware } from "./crypto/middleware";
+import { Vault } from "./crypto/vault";
 import { newId } from "./ids";
 import type {
   BlobEntry,
@@ -35,8 +37,13 @@ export class HCareDB extends Dexie {
   capture_drafts!: Table<CaptureDraft, string>;
   capture_items!: Table<CaptureItem, string>;
 
-  constructor(name = "hcare") {
+  readonly vault: Vault;
+
+  /** requireEncryption: refuse plaintext writes while locked (the app sets this; tests don't). */
+  constructor(name = "hcare", opts: { requireEncryption?: boolean } = {}) {
     super(name);
+    this.vault = new Vault(opts.requireEncryption ?? false);
+    this.use(encryptionMiddleware(this.vault));
     this.version(1).stores({
       patients: "id, sync_status, updated_at",
       consultations: "id, sync_status, patient_id, updated_at",

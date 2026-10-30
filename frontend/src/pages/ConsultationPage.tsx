@@ -26,8 +26,13 @@ export function ConsultationPage() {
   const { id: patientId = "", cid = "" } = useParams();
   const { db, actor, scheduler, session } = useApp();
   const connectivity = useConnectivity();
-  const record = useLiveQuery(() => db.consultations.get(cid), [db, cid]);
-  const patient = useLiveQuery(() => db.patients.get(patientId), [db, patientId]);
+  // Wrapped so "still loading" (undefined) is distinguishable from "not on this device" ({rec: undefined}).
+  const loaded = useLiveQuery(
+    async () => ({ record: await db.consultations.get(cid), patient: await db.patients.get(patientId) }),
+    [db, cid, patientId],
+  );
+  const record = loaded?.record;
+  const patient = loaded?.patient;
   const ready = useLiveQuery(() => aiReadiness(db), [db]);
   const storedUseLlm = useLiveQuery(async () => (await db.getMeta<boolean>(USE_LLM_KEY)) ?? false, [db]);
   // Local state so the checkbox responds instantly; the preference is persisted for next time.
@@ -91,15 +96,16 @@ export function ConsultationPage() {
     }
   });
 
-  if (record === undefined || patient === undefined || !draft) return <main className="page muted">Loading…</main>;
-  if (!record?.data) {
+  if (loaded === undefined) return <main className="page muted">Loading…</main>;
+  if (!record?.data || record.deleted) {
     return (
       <main className="page">
-        <p>Consultation not found.</p>
+        <p>This visit is not on this device. If it was recorded on another device, connect to the internet so it can sync.</p>
         <Link to={`/patients/${patientId}`}>Back</Link>
       </main>
     );
   }
+  if (!draft) return <main className="page muted">Loading…</main>;
 
   const d = draft;
   const editable = d.review.status === "draft";

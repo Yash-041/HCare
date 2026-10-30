@@ -4,12 +4,28 @@
  * sync pull, conflict resolution), and a debounced flush re-derives the entries.
  */
 import { lexiconTags, normalize } from "../../ai/extract/rules";
+import type { Vault } from "../crypto/vault";
 import type { HCareDB } from "../db";
 import type { ConsultationData, DocumentData, EntityName, LocalRecord, PatientData, SearchEntry } from "../types";
 
 /** Bump when tokenization changes; the index is then rebuilt on next start. */
-export const INDEX_VERSION = 1;
-const MAX_TOKENS = 500;
+export const INDEX_VERSION = 2; // v2: blind (HMAC) tokens + prefix tokens
+
+/**
+ * Make an entry safe to store: every token becomes a keyed hash (blind index), so the
+ * searchable index holds no readable names, symptoms or dates, while equal words still
+ * match. Prefix search works through hashed prefixes ("pre:ram" for "ramesh"), and the
+ * plain word list needed for typo tolerance is kept in an encrypted field.
+ */
+export function sealEntry(entry: SearchEntry, vault: Vault): SearchEntry {
+  const plainWords = entry.tokens.filter((t) => !t.includes(":"));
+  const prefixes = plainWords.flatMap((w) =>
+    Array.from({ length: Math.max(0, Math.min(w.length - 1, 10) - 1) }, (_, i) => `pre:${w.slice(0, i + 2)}`),
+  );
+  const tokens = [...new Set([...entry.tokens, ...prefixes])].map((t) => vault.blind(t));
+  return { ...entry, tokens, words: [...new Set(plainWords)] };
+}
+const MAX_TOKENS = 400; // before prefix expansion
 
 const STOPWORDS = new Set(
   (
@@ -159,7 +175,8 @@ export class SearchIndexer {
     this.flushing = this.db
       .transaction("rw", [this.db.patients, this.db.consultations, this.db.documents, this.db.search_index], async () => {
         for (const [id, entity] of batch) {
-          const entry = entryFor(await this.db.records(entity).get(id));
+          const plain = entryFor(await this.db.records(entity).get(id));
+          const entry = plain && sealEntry(plain, this.db.vault);
           if (entry) {
             const old = await this.db.search_index.get(id);
             // Keep an existing embedding while its source text is unchanged.
@@ -203,7 +220,10 @@ export class SearchIndexer {
     await this.db.transaction("rw", [this.db.patients, this.db.consultations, this.db.documents, this.db.search_index, this.db.meta], async () => {
       await this.db.search_index.clear();
       for (const entity of ["patient", "consultation", "document"] as EntityName[]) {
-        const entries = (await this.db.records(entity).toArray()).map(entryFor).filter((e): e is SearchEntry => !!e);
+        const entries = (await this.db.records(entity).toArray())
+          .map(entryFor)
+          .filter((e): e is SearchEntry => !!e)
+          .map((e) => sealEntry(e, this.db.vault));
         await this.db.search_index.bulkPut(entries);
       }
       await this.db.setMeta("search_index_version", INDEX_VERSION);

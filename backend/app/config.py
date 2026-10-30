@@ -14,6 +14,8 @@ class Settings:
     jwt_ttl_hours: int = int(os.getenv("JWT_TTL_HOURS", "168"))
     seed_demo_users: bool = os.getenv("SEED_DEMO_USERS", "1") == "1"
     cors_origins: list[str] = field(default_factory=lambda: _env_list("CORS_ORIGINS", "*"))
+    # Reject plaintext sync payloads (on in docker-compose; tests opt in explicitly).
+    require_encrypted_payloads: bool = os.getenv("REQUIRE_ENCRYPTED_PAYLOADS", "0") == "1"
     max_ops_per_push: int = 100
     max_pull_limit: int = 1000
 

@@ -1,4 +1,5 @@
 // Mirrors backend/app/schemas.py. The server re-validates everything.
+import type { Envelope, WrappedKey } from "./crypto/vault";
 
 export type EntityName = "patient" | "consultation" | "document";
 export type Role = "health_worker" | "doctor" | "admin";
@@ -168,12 +169,15 @@ export interface OutboxOp {
 export interface CachedSession {
   username: string;
   user: UserOut;
-  token: string;
   token_expires_at: number;
-  /** PBKDF2 verifier so the same password can unlock the app offline. */
-  salt: string;
-  verifier: string;
-  iterations: number;
+  /** Server token and payload key, encrypted with the device data key. */
+  token_enc: Envelope;
+  transport_key_enc: Envelope | null;
+  /**
+   * The device data key wrapped with a key derived from this user's password (PBKDF2).
+   * Unwrapping it is the offline password check; no password verifier is stored.
+   */
+  wrapped_dek: WrappedKey;
   cached_at: string;
 }
 
@@ -193,14 +197,19 @@ export interface SearchEntry {
   tokens: string[];
   /** Short English summary used for semantic (embedding) search. */
   text: string;
+  /** Plain words of this record (encrypted at rest); used for typo-tolerant matching. */
+  words?: string[];
   text_hash: string;
   embedding?: number[];
   embedded_hash?: string;
 }
 
+/** A photo or recording. Encrypted entries carry iv + ct instead of `blob`. */
 export interface BlobEntry {
   id: string;
-  blob: Blob;
+  blob?: Blob;
+  iv?: Uint8Array;
+  ct?: ArrayBuffer;
   mime_type: string;
 }
 
@@ -272,6 +281,8 @@ export interface LoginResponse {
   token_type: string;
   expires_in: number;
   user: UserOut;
+  transport_key: string;
+  device_key: string | null;
 }
 
 export interface WireOp {

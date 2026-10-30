@@ -37,8 +37,16 @@ test("offline capture survives a reload and an offline sign-in, then syncs on re
   await addPatient(page, "Kamla Bai", "Rampur");
   await expect(badge(page)).toHaveText("Offline · 1 pending");
 
-  // Reload with no network: the service worker must serve the app shell.
+  // Reload with no network: the service worker serves the app shell, and patient data
+  // stays encrypted until the password is entered (unlocking works offline).
   await page.reload();
+  await expect(page.getByRole("heading", { name: "Locked" })).toBeVisible();
+  await expect(page.getByText("Kamla Bai")).toBeHidden();
+  await page.getByLabel("Password").fill("wrong-password");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await expect(page.getByText("Invalid username or password")).toBeVisible();
+  await page.getByLabel("Password").fill("asha1234");
+  await page.getByRole("button", { name: "Unlock" }).click();
   await expect(page.locator(".chip")).toHaveText("Pending");
 
   // Sign out and back in while still offline.

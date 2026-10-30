@@ -170,6 +170,7 @@ ENTITY_SCHEMAS: dict[str, type[BaseModel]] = {
 class LoginRequest(BaseModel):
     username: str
     password: str
+    device_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class UserOut(BaseModel):
@@ -184,6 +185,24 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserOut
+    # This session's payload-encryption key (AES-256-GCM, base64).
+    transport_key: str
+    # The device's secret, used to unlock its encrypted local data (only with a device_id).
+    device_key: str | None = None
+
+
+class EncryptedPayload(BaseModel):
+    iv: str = Field(max_length=32)
+    ct: str = Field(max_length=4_000_000)
+
+
+class DeviceOut(BaseModel):
+    id: str
+    status: str
+    first_seen: datetime
+    last_seen: datetime
+    last_user: str | None
+    wipe_requested_at: datetime | None
 
 
 class CreateUserRequest(BaseModel):
@@ -204,6 +223,8 @@ class SyncOp(BaseModel):
     # Server version the client's edit was based on; 0 means "create".
     base_version: int = Field(ge=0)
     data: dict[str, Any] | None = None
+    # Encrypted form of `data` (AAD = op_id); the server decrypts it with the session key.
+    data_enc: EncryptedPayload | None = None
     client_ts: datetime | None = None
     resolves_conflict_id: str | None = None
     # For conflict resolutions: which side won per field, e.g. {"village": "theirs",
@@ -239,6 +260,7 @@ class Change(BaseModel):
     id: str
     version: int
     data: dict[str, Any] | None
+    data_enc: EncryptedPayload | None = None
     deleted: bool
     updated_at: datetime
     updated_by: str
@@ -279,6 +301,8 @@ class ConflictOut(BaseModel):
     # Per-field decisions of the resolution (from the audit log), once resolved.
     resolution: dict[str, str] | None = None
     superseded_by: str | None
+    # With payload encryption: the *_data fields are null and their encrypted forms are here.
+    enc: dict[str, EncryptedPayload] | None = None
 
 
 class AuditEntryOut(BaseModel):

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { loginOffline, AuthError } from "../src/lib/auth";
+import { inject } from "vitest";
+import { ApiClient, DeviceWipeError } from "../src/lib/api";
+import { AuthError, lockoutSeconds, loginOffline, SLOWDOWN_AFTER, WIPE_AFTER } from "../src/lib/auth";
+import { wipeDevice } from "../src/lib/crypto/wipe";
+import { HCareDB } from "../src/lib/db";
 import { applyMerge, decisionSummary, initialDecisions, planMerge } from "../src/lib/merge";
 import { deleteRecord, resolveConflict, saveRecord } from "../src/lib/repo";
 import type { ConflictOut, PatientData } from "../src/lib/types";
@@ -263,12 +267,75 @@ describe("conflicts between two devices", () => {
   });
 });
 
-describe("authentication", () => {
-  it("signs in offline with the cached verifier, and rejects a wrong password", async () => {
+describe("authentication and device security", () => {
+  it("signs in offline by unlocking the data key with the password; rejects a wrong one", async () => {
     const d = await makeDevice();
-    const session = await loginOffline(d.db, "asha", "asha1234");
+    const id = await saveRecord(d.db, d.actor, "patient", null, patient());
+    d.db.vault.lock();
+    await expect(d.db.patients.get(id)).rejects.toThrow(/locked/i);
+
+    const { session } = await loginOffline(d.db, "asha", "asha1234");
     expect(session.user.role).toBe("health_worker");
+    expect((await d.db.patients.get(id))!.data!.name).toBe("Sunita Devi");
+
+    d.db.vault.lock();
     await expect(loginOffline(d.db, "asha", "wrong")).rejects.toBeInstanceOf(AuthError);
+    expect(d.db.vault.unlocked).toBe(false);
     await expect(loginOffline(d.db, "nobody", "x")).rejects.toThrow(/never signed in/);
+  });
+
+  it("a second user unlocks the same tablet's data via the server's device key", async () => {
+    const asha = await makeDevice("asha", "asha1234");
+    const id = await saveRecord(asha.db, asha.actor, "patient", null, patient({ name: "Shared Tablet Patient" }));
+    asha.db.vault.lock();
+    // Doctor signs in online on the same tablet (same database, same device id).
+    const doctor = await makeDevice("doctor", "doctor123", asha.db);
+    expect((await doctor.db.patients.get(id))!.data!.name).toBe("Shared Tablet Patient");
+    // ...and can now also unlock it offline with their own password.
+    doctor.db.vault.lock();
+    await loginOffline(doctor.db, "doctor", "doctor123");
+    expect(doctor.db.vault.unlocked).toBe(true);
+  });
+
+  it("slows down repeated wrong passwords, then erases the device's data", async () => {
+    const d = await makeDevice();
+    await saveRecord(d.db, d.actor, "patient", null, patient());
+    d.db.vault.lock();
+    for (let i = 1; i < SLOWDOWN_AFTER; i++) await expect(loginOffline(d.db, "asha", "bad")).rejects.toThrow("Invalid username or password");
+    await expect(loginOffline(d.db, "asha", "bad")).rejects.toThrow(/5 attempts left/);
+    await expect(loginOffline(d.db, "asha", "asha1234")).rejects.toThrow(/Try again in \d+ seconds/); // even the right one, during lockout
+    expect(await lockoutSeconds(d.db)).toBeGreaterThan(0);
+
+    // Skip the waits: pretend each lockout elapsed.
+    for (let n = SLOWDOWN_AFTER; n < WIPE_AFTER; n++) {
+      await d.db.setMeta("auth_failures", { count: n, last: 0 });
+      await expect(loginOffline(d.db, "asha", "bad")).rejects.toThrow(n + 1 >= WIPE_AFTER ? /erased/ : /attempts? left/);
+    }
+    // Everything is gone.
+    const reopened = new HCareDB(d.db.name);
+    expect(await reopened.patients.count()).toBe(0);
+    expect(await reopened.sessions.count()).toBe(0);
+  });
+
+  it("an admin's remote wipe reaches a lost device on its next sync", async () => {
+    const d = await makeDevice();
+    await saveRecord(d.db, d.actor, "patient", null, patient());
+    await d.engine.sync();
+
+    const admin = new ApiClient({ baseUrl: inject("apiUrl") });
+    const { access_token } = await admin.login("admin", "admin123");
+    const adminApi = new ApiClient({ baseUrl: inject("apiUrl"), getToken: () => access_token });
+    await adminApi.requestWipe(d.deviceId);
+
+    let wipeOrdered = false;
+    const lost = new ApiClient({
+      baseUrl: inject("apiUrl"),
+      getToken: () => (d.api as unknown as { opts: { getToken: () => string } }).opts.getToken(),
+      onDeviceWipe: () => (wipeOrdered = true),
+    });
+    await expect(lost.pull(0)).rejects.toBeInstanceOf(DeviceWipeError);
+    expect(wipeOrdered).toBe(true);
+    await wipeDevice(d.db);
+    expect(await new HCareDB(d.db.name).patients.count()).toBe(0);
   });
 });

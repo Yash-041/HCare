@@ -6,7 +6,7 @@ import type { RecordSyncStatus } from "../lib/types";
 const CONNECTIVITY_LABEL = { online: "Online", offline: "Offline", unreachable: "Server unreachable" } as const;
 
 export function TopBar() {
-  const { session, signOut } = useApp();
+  const { session, signOut, lockNow } = useApp();
   const connectivity = useConnectivity();
   const badge = useSyncBadge();
   const navigate = useNavigate();
@@ -28,6 +28,9 @@ export function TopBar() {
       </div>
       <div className="topbar-user">
         <span className="user-name">{session.user.full_name || session.user.username}</span>
+        <button className="link" onClick={lockNow} title="Lock: patient data stays encrypted until the password is entered">
+          Lock
+        </button>
         <button
           className="link"
           onClick={() => {

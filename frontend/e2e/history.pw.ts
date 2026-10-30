@@ -70,6 +70,9 @@ test("opening a new visit shows the sourced patient history, offline", async ({ 
   await context.setOffline(true);
 
   await page.goto(`/patients/${pid}/consultations/${currentId}`);
+  // A full page load locks the app; unlock (offline) with the password.
+  await page.getByLabel("Password").fill("asha1234");
+  await page.getByRole("button", { name: "Unlock" }).click();
   const history = page.locator(".history");
   await expect(history).toContainText("3 earlier visits");
 

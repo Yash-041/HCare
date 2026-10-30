@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from "react";
 import type { SignIn } from "../app/AppContext";
 import { AuthError } from "../lib/auth";
+import { consumeWipedFlag } from "../lib/crypto/wipe";
 
 export function LoginPage({ signIn }: { signIn: SignIn }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [wiped] = useState(consumeWipedFlag);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -27,6 +29,11 @@ export function LoginPage({ signIn }: { signIn: SignIn }) {
         <img src="/icon.svg" alt="" width={56} height={56} />
         <h1>HCare</h1>
         <p className="muted">Patient records that work without internet</p>
+        {wiped && (
+          <p className="banner banner-error" role="alert">
+            All patient data on this device was erased (device reported lost, or too many wrong passwords).
+          </p>
+        )}
         <label>
           Username
           <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />

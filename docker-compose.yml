@@ -24,6 +24,8 @@ services:
       DATABASE_URL: postgresql+psycopg://hcare:hcare@db:5432/hcare
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-in-production-0000}
       SEED_DEMO_USERS: "1"
+      # Devices must encrypt sync payloads (on top of HTTPS); plaintext ops are rejected.
+      REQUIRE_ENCRYPTED_PAYLOADS: "1"
     ports:
       - "8000:8000"
     depends_on:

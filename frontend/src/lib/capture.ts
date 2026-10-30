@@ -6,6 +6,7 @@
  * from the queue. Item id = blob id = later SourceRef/document id, so provenance links
  * from the case file back to the original audio/photo never break.
  */
+import { getBlob, putBlobs, sealBlob } from "./crypto/blobs";
 import type { HCareDB } from "./db";
 import { newId, nowIso } from "./ids";
 import { saveRecord, type Actor } from "./repo";
@@ -54,8 +55,10 @@ export async function addAudio(
   opts: { durationS: number | null; language: string | null; model: string; translate: boolean },
 ): Promise<string> {
   const id = newId();
+  // Encrypt first: WebCrypto is async and must not run inside the transaction.
+  const sealed = await sealBlob(db, id, blob, blob.type || "audio/webm");
   await db.transaction("rw", db.blobs, db.capture_items, async () => {
-    await db.blobs.put({ id, blob, mime_type: blob.type || "audio/webm" });
+    await db.blobs.put(sealed);
     await db.capture_items.add({
       id,
       draft_id: draftId,
@@ -83,8 +86,9 @@ export async function addImage(
   opts: { docKind: DocumentData["kind"]; ocrLangs: string },
 ): Promise<string> {
   const id = newId();
+  const sealed = await sealBlob(db, id, blob, blob.type || "image/jpeg");
   await db.transaction("rw", db.blobs, db.capture_items, async () => {
-    await db.blobs.put({ id, blob, mime_type: blob.type || "image/jpeg" });
+    await db.blobs.put(sealed);
     await db.capture_items.add({
       id,
       draft_id: draftId,
@@ -181,10 +185,10 @@ export class CaptureRunner {
     };
     try {
       await update({ status: "processing", progress: null, error: null });
-      const stored = await this.db.blobs.get(item.blob_id);
+      const stored = await getBlob(this.db, item.blob_id);
       if (!stored) throw new Error("recording or photo is missing from this device");
-      if (item.kind === "audio") await this.processAudio(item, stored.blob, update, onProgress);
-      else await this.processImage(item, stored.blob, update, onProgress);
+      if (item.kind === "audio") await this.processAudio(item, stored, update, onProgress);
+      else await this.processImage(item, stored, update, onProgress);
     } catch (e) {
       await update({ status: "error", stage: null, progress: null, error: e instanceof Error ? e.message : String(e) });
     }
@@ -233,7 +237,7 @@ export class CaptureRunner {
     const pre = await this.ai.preprocess(blob);
     const processedId = `${item.id}:processed`;
     const sha256 = await sha256Hex(pre.original);
-    await this.db.blobs.bulkPut([
+    await putBlobs(this.db, [
       // Replace the raw camera file with the compressed copy to save storage.
       { id: item.blob_id, blob: pre.original, mime_type: "image/jpeg" },
       { id: processedId, blob: pre.processed, mime_type: "image/png" },

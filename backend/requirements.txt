@@ -4,3 +4,4 @@ sqlalchemy>=2.0.36
 psycopg[binary]>=3.2
 pydantic>=2.9
 pyjwt>=2.9
+cryptography>=43

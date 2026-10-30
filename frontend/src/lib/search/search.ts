@@ -37,22 +37,18 @@ interface Term {
   prefix: string | null;
 }
 
-// All clinical phrases (every language) compiled once into a single longest-first regex;
-// compiling them per query cost ~100 ms.
-let phraseIndex: { re: RegExp; tags: Map<string, string> } | null = null;
-function phrases() {
-  if (!phraseIndex) {
-    const tags = new Map<string, string>([
-      ...Object.entries(SYMPTOMS).flatMap(([c, forms]) => forms.map((f) => [normalize(f), `sym:${c}`] as [string, string])),
-      ...Object.entries(MEDICINES).flatMap(([c, forms]) => forms.map((f) => [normalize(f), `med:${c}`] as [string, string])),
-    ]);
-    const alt = [...tags.keys()]
-      .sort((a, b) => b.length - a.length)
-      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"))
-      .join("|");
-    phraseIndex = { re: new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])(${alt})(?![\\p{L}\\p{M}])`, "gu"), tags };
-  }
-  return phraseIndex;
+// Clinical phrases (every language) as a map from word sequence to tag. Queries are looked
+// up by their 1-4 word n-grams, longest first. (A single regex over all phrases cost ~1 s to
+// compile on the first search; per-phrase regexes ~100 ms per query.)
+const MAX_PHRASE_WORDS = 4;
+let phraseMap: Map<string, string> | null = null;
+const splitWords = (s: string) => s.split(/[^\p{L}\p{M}\p{N}.+-]+/u).filter(Boolean);
+function phrases(): Map<string, string> {
+  phraseMap ??= new Map<string, string>([
+    ...Object.entries(SYMPTOMS).flatMap(([c, forms]) => forms.map((f) => [splitWords(normalize(f)).join(" "), `sym:${c}`] as [string, string])),
+    ...Object.entries(MEDICINES).flatMap(([c, forms]) => forms.map((f) => [splitWords(normalize(f)).join(" "), `med:${c}`] as [string, string])),
+  ]);
+  return phraseMap;
 }
 
 const tagSlug = (s: string) => normalize(s).trim().replace(/\s+/g, "_");
@@ -72,27 +68,31 @@ export function parseQuery(query: string): { terms: Term[]; canonicalText: strin
     q = q.replace(m[0], " ");
   }
 
-  const { re, tags } = phrases();
-  re.lastIndex = 0;
-  for (const m of [...q.matchAll(re)]) {
-    const tag = tags.get(m[1].replace(/\s+/g, " "));
-    if (!tag) continue;
-    const at = m.index!;
-    const phrase = m[0];
-    const [kind, name] = tag.split(":");
-    const canon = kind === "sym" ? (canonicalSymptom(name) ?? name) : (canonicalMedicine(name) ?? name);
-    terms.push({
-      label: `${kind === "sym" ? "symptom" : "medicine"}: ${canon}`,
-      // The tag is always indexed (structured fields + lexicon scan of free text). The bare
-      // word is added only for one-word terms; "body ache" must not match any "body".
-      exact: [`${kind}:${tagSlug(canon)}`, ...(/\s/.test(canon) ? [] : words(canon))],
-      prefix: null,
-    });
-    canonical.push(canon);
-    q = q.slice(0, at) + " ".repeat(phrase.length) + q.slice(at + phrase.length);
+  const map = phrases();
+  const qWords = splitWords(q);
+  const leftover: string[] = [];
+  for (let i = 0; i < qWords.length; ) {
+    let matched = 0;
+    for (let n = Math.min(MAX_PHRASE_WORDS, qWords.length - i); n >= 1 && !matched; n--) {
+      const tag = map.get(qWords.slice(i, i + n).join(" "));
+      if (!tag) continue;
+      const [kind, name] = tag.split(":");
+      const canon = kind === "sym" ? (canonicalSymptom(name) ?? name) : (canonicalMedicine(name) ?? name);
+      terms.push({
+        label: `${kind === "sym" ? "symptom" : "medicine"}: ${canon}`,
+        // The tag is always indexed (structured fields + lexicon scan of free text). The bare
+        // word is added only for one-word terms; "body ache" must not match any "body".
+        exact: [`${kind}:${tagSlug(canon)}`, ...(/\s/.test(canon) ? [] : words(canon))],
+        prefix: null,
+      });
+      canonical.push(canon);
+      matched = n;
+    }
+    if (matched) i += matched;
+    else leftover.push(qWords[i++]);
   }
 
-  for (const w of words(q)) {
+  for (const w of words(leftover.join(" "))) {
     terms.push({ label: w, exact: [w, `dx:${w}`, `all:${w}`, `lab:${w}`], prefix: w });
     canonical.push(w);
   }
@@ -123,12 +123,14 @@ async function matchTerm(db: HCareDB, term: Term, vocabulary: () => Promise<stri
   };
   // One equals() per token, keys only: anyOf() on a multi-entry index was orders of
   // magnitude slower, and full entries are fetched once, after intersecting.
+  // Tokens are blind (keyed hashes), so queries hash the same way before looking up.
   const keysFor = (tokens: string[]) =>
-    Promise.all(tokens.map((t) => db.search_index.where("tokens").equals(t).primaryKeys() as Promise<string[]>));
+    Promise.all(tokens.map((t) => db.search_index.where("tokens").equals(db.vault.blind(t)).primaryKeys() as Promise<string[]>));
   const exact = await keysFor(term.exact);
   term.exact.forEach((t, i) => add(exact[i], t.includes(":") ? 3 : 2, term.label));
   if (term.prefix && term.prefix.length >= 2) {
-    add((await db.search_index.where("tokens").startsWith(term.prefix).primaryKeys()) as string[], 1, term.label);
+    // Hashed prefixes replace startsWith(), which can't work on hashed tokens.
+    add((await keysFor([`pre:${term.prefix}`]))[0], 1, term.label);
   }
   if (hits.size === 0 && term.prefix && term.prefix.length >= 4) {
     // Typo tolerance: nearest indexed words (1 edit, 2 for long words).
@@ -166,21 +168,40 @@ export async function search(
       .map((entry) => ({ entry, score: 1, reasons: [entry.date ?? ""] }));
   }
 
+  // Plain words live only in each entry's encrypted `words` field; gathered lazily, and
+  // only when a term found nothing (typo fallback).
   let vocab: Promise<string[]> | null = null;
-  const vocabulary = () => (vocab ??= db.search_index.orderBy("tokens").uniqueKeys().then((k) => k as string[]));
+  const vocabulary = () =>
+    (vocab ??= (async () => {
+      const all = new Set<string>();
+      await db.search_index.each((e) => e.words?.forEach((w) => all.add(w)));
+      return [...all];
+    })());
 
   // AND across terms.
   const perTerm = await Promise.all(terms.map((t) => matchTerm(db, t, vocabulary)));
   let ids = [...perTerm[0].keys()];
   for (const m of perTerm.slice(1)) ids = ids.filter((id) => m.has(id));
 
-  const entries = new Map((await db.search_index.bulkGet(ids)).filter((e): e is SearchEntry => !!e).map((e) => [e.entity_id, e]));
+  // Rank on keys alone, then fetch (and decrypt) entries page by page in score order, only
+  // until enough pass the filters. Fetching every match first cost ~1 s for 1,000 hits.
+  const limit = opts.limit ?? 100;
+  const scored = ids
+    .map((id) => {
+      const parts = perTerm.map((m) => m.get(id)!);
+      return { id, score: parts.reduce((s, [v]) => s + v, 0) / terms.length, reasons: [...new Set(parts.map(([, r]) => r))] };
+    })
+    .sort((a, b) => b.score - a.score);
   const hits: SearchHit[] = [];
-  for (const id of ids) {
-    const entry = entries.get(id);
-    if (!entry || !passes(entry, filters)) continue;
-    const parts = perTerm.map((m) => m.get(id)!);
-    hits.push({ entry, score: parts.reduce((s, [v]) => s + v, 0) / terms.length, reasons: [...new Set(parts.map(([, r]) => r))] });
+  // With semantic re-ranking, a lower keyword score can still win, so fetch everything.
+  const want = opts.embed ? Infinity : limit;
+  for (let i = 0; i < scored.length && hits.length < want; i += limit) {
+    const page = scored.slice(i, i + limit);
+    const entries = await db.search_index.bulkGet(page.map((p) => p.id));
+    page.forEach((p, j) => {
+      const entry = entries[j];
+      if (entry && passes(entry, filters)) hits.push({ entry, score: p.score, reasons: p.reasons });
+    });
   }
 
   if (opts.embed) {
@@ -200,7 +221,7 @@ export async function search(
 
   // Ties: newest visits first.
   hits.sort((a, b) => b.score - a.score || (b.entry.date ?? "").localeCompare(a.entry.date ?? ""));
-  return hits.slice(0, opts.limit ?? 100);
+  return hits.slice(0, limit);
 }
 
 function passes(e: SearchEntry, f: SearchFilters): boolean {

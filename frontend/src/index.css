@@ -1153,3 +1153,10 @@ button.secondary.active {
 .resolved-item {
   align-items: flex-start;
 }
+
+/* ---------------------------------------------------------------- lock screen */
+
+.lock-icon {
+  font-size: 2.4rem;
+  line-height: 1;
+}

@@ -5,6 +5,7 @@ import { generate, llmSupported } from "../../ai/llm";
 import { useApp } from "../../app/AppContext";
 import { writeNarrative, type NarrativeSentence } from "../../lib/history/narrative";
 import { summarizeHistory, type SourceLink, type Statement } from "../../lib/history/summary";
+import { entryFor } from "../../lib/search/indexer";
 import { Sparkline } from "./Sparkline";
 
 const SERIES_COLORS = ["#0d9488", "#eb6834"]; // validated: CVD ΔE 10.7, contrast >= 3:1
@@ -59,8 +60,9 @@ export function HistoryPanel({ patientId, currentId }: { patientId: string; curr
   const { db } = useApp();
   const data = useLiveQuery(async () => {
     const [patient, consultations] = await Promise.all([db.patients.get(patientId), db.consultations.where("patient_id").equals(patientId).toArray()]);
-    const index = await db.search_index.bulkGet(consultations.map((c) => c.id));
-    return { patient, consultations, index: index.filter((e) => !!e) };
+    // Plain clinical tags straight from the (decrypted) records: the stored index is hashed.
+    const index = consultations.map((c) => entryFor(c)).filter((e) => !!e);
+    return { patient, consultations, index };
   }, [db, patientId]);
 
   const summary = useMemo(() => {

@@ -206,6 +206,8 @@ This uses a local SQLite file (`backend/hcare.db`) instead of PostgreSQL. The we
 |---|---|
 | `docker compose` says *"failed to connect to the docker API"* | Docker Desktop isn't running. Start it and wait for "Engine running" |
 | *"port is already allocated"* for 8000 or 55432 | Another program uses that port. Stop it, or change the left-hand number under `ports:` in `docker-compose.yml` |
+| App shows **Locked** after a reload | Expected: patient data is encrypted and the app locks on every restart and after 15 minutes idle. Enter the password; this works offline |
+| Phone lost or stolen | Sign in as `admin` → **Sync** → **Manage devices** → **Report lost & wipe**. See [SECURITY.md](SECURITY.md) |
 | Sign-in fails with *"Sign-in failed"* | The backend isn't reachable. Check http://localhost:8000/health and that `npm run dev` / `vite preview` is running |
 | *"No connection, and this user has never signed in on this device"* | Offline sign-in needs one successful **online** sign-in on that browser first |
 | The app looks outdated after pulling new code | Click **Update** on the "new version available" toast. Or in DevTools → **Application → Storage → Clear site data** (this also deletes local patient data that hasn't synced) |
