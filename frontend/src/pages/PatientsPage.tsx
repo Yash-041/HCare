@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../app/AppContext";
 import { useConnectivity, useOutboxSummary } from "../app/hooks";
+import { ReviewQueue } from "../components/ReviewQueue";
 import { SyncChip } from "../components/StatusBar";
 import type { SearchFilters, SearchHit } from "../lib/search/search";
 import type { ConsultationData, DocumentData, EntityName, LocalRecord, PatientData } from "../lib/types";
@@ -19,7 +20,7 @@ function patientLine(d: PatientData) {
 }
 
 export function PatientsPage() {
-  const { db, search } = useApp();
+  const { db, search, session } = useApp();
   const [query, setQuery] = useState("");
   const [type, setType] = useState<EntityName | "all">("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -88,6 +89,8 @@ export function PatientsPage() {
         </button>
       </div>
       {showFilters && <Filters {...{ type, setType, dateFrom, setDateFrom, dateTo, setDateTo }} />}
+
+      {!hits && session.user.role === "doctor" && <ReviewQueue />}
 
       {hits ? (
         <SearchResults hits={hits} took={took} />

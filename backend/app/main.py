@@ -27,6 +27,9 @@ from .schemas import (
     PullResponse,
     PushRequest,
     PushResponse,
+    ResetPasswordRequest,
+    UpdateUserRequest,
+    UserAdminOut,
     UserOut,
 )
 from .sync import process_op, pull_changes
@@ -173,23 +176,75 @@ def create_app(
                 audit.append(db, user_id=admin.id, device_id=device_id, action="device_wipe_requested", details={})
         return {"status": device.status}
 
-    @app.post("/admin/users", response_model=UserOut, status_code=201)
-    def create_user(body: CreateUserRequest, db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))):
-        user = User(
-            id=str(uuid.uuid4()),
-            username=body.username,
-            password_hash=hash_password(body.password),
-            role=body.role,
-            full_name=body.full_name,
-            active=True,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(user)
-        try:
+    # ------------------------------------------------------------ staff accounts (admin)
+
+    def admin_tx(request: Request):
+        """A transaction holding the sync lock, so admin actions can join the audit chain."""
+        db = request.app.state.sessionmaker()
+        db.begin()
+        db.execute(select(SyncCounter).where(SyncCounter.id == 1).with_for_update()).scalar_one()
+        return db
+
+    def admin_out(u: User) -> UserAdminOut:
+        return UserAdminOut(id=u.id, username=u.username, full_name=u.full_name, role=u.role, active=u.active, created_at=u.created_at)
+
+    def revoke_sessions(db: Session, user_id: str) -> None:
+        now = datetime.now(timezone.utc)
+        for s in db.execute(select(AuthSession).where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))).scalars():
+            s.revoked_at = now
+
+    @app.get("/admin/users", response_model=list[UserAdminOut])
+    def list_users(db: Session = Depends(get_db), _: User = Depends(require_roles("admin"))):
+        return [admin_out(u) for u in db.execute(select(User).order_by(User.role, User.full_name)).scalars()]
+
+    @app.post("/admin/users", response_model=UserAdminOut, status_code=201)
+    def create_user(body: CreateUserRequest, request: Request, admin: User = Depends(require_roles("admin"))):
+        with admin_tx(request) as db:
+            if db.execute(select(User).where(User.username == body.username)).scalar_one_or_none():
+                raise HTTPException(status.HTTP_409_CONFLICT, "username already exists")
+            user = User(
+                id=str(uuid.uuid4()),
+                username=body.username,
+                password_hash=hash_password(body.password),
+                role=body.role,
+                full_name=body.full_name,
+                active=True,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(user)
+            audit.append(db, user_id=admin.id, device_id="admin", action="user_created", entity="user", entity_id=user.id,
+                         details={"username": user.username, "role": user.role})
             db.commit()
-        except IntegrityError:
-            raise HTTPException(status.HTTP_409_CONFLICT, "username already exists")
-        return _user_out(user)
+            return admin_out(user)
+
+    @app.patch("/admin/users/{user_id}", response_model=UserAdminOut)
+    def update_user(user_id: str, body: UpdateUserRequest, request: Request, admin: User = Depends(require_roles("admin"))):
+        with admin_tx(request) as db:
+            user = db.get(User, user_id)
+            if user is None:
+                raise HTTPException(404, "user not found")
+            if user.id == admin.id and (body.active is False or (body.role and body.role != "admin")):
+                raise HTTPException(400, "you cannot deactivate or demote your own account")
+            changes = {k: v for k, v in body.model_dump(exclude_none=True).items() if getattr(user, k) != v}
+            for k, v in changes.items():
+                setattr(user, k, v)
+            if changes.get("active") is False or "role" in changes:
+                revoke_sessions(db, user.id)  # takes effect immediately, even mid-session
+            if changes:
+                audit.append(db, user_id=admin.id, device_id="admin", action="user_updated", entity="user", entity_id=user.id, details=changes)
+            db.commit()
+            return admin_out(user)
+
+    @app.post("/admin/users/{user_id}/password", status_code=204)
+    def reset_password(user_id: str, body: ResetPasswordRequest, request: Request, admin: User = Depends(require_roles("admin"))):
+        with admin_tx(request) as db:
+            user = db.get(User, user_id)
+            if user is None:
+                raise HTTPException(404, "user not found")
+            user.password_hash = hash_password(body.password)
+            revoke_sessions(db, user.id)
+            audit.append(db, user_id=admin.id, device_id="admin", action="password_reset", entity="user", entity_id=user.id, details={})
+            db.commit()
 
     # ------------------------------------------------------------ sync
 

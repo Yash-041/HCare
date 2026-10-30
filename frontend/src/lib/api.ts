@@ -3,6 +3,7 @@ import type {
   LoginResponse,
   PullResponse,
   PushResponse,
+  Role,
   UserOut,
   WireOp,
 } from "./types";
@@ -47,6 +48,29 @@ export interface DeviceOut {
   last_seen: string;
   last_user: string | null;
   wipe_requested_at: string | null;
+}
+
+export interface StaffUser {
+  id: string;
+  username: string;
+  full_name: string;
+  role: Role;
+  active: boolean;
+  created_at: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  user_id: string;
+  device_id: string;
+  op_id: string | null;
+  entity: string | null;
+  entity_id: string | null;
+  action: string;
+  version: number | null;
+  details: Record<string, unknown>;
+  hash: string;
 }
 
 interface Sealed {
@@ -190,6 +214,30 @@ export class ApiClient {
 
   async getConflict(id: string) {
     return this.openConflict(await this.request<ConflictOut>("GET", `/sync/conflicts/${encodeURIComponent(id)}`));
+  }
+
+  listUsers() {
+    return this.request<StaffUser[]>("GET", "/admin/users");
+  }
+
+  createUser(user: { username: string; password: string; role: Role; full_name: string }) {
+    return this.request<StaffUser>("POST", "/admin/users", user);
+  }
+
+  updateUser(id: string, changes: { full_name?: string; role?: Role; active?: boolean }) {
+    return this.request<StaffUser>("PATCH", `/admin/users/${encodeURIComponent(id)}`, changes);
+  }
+
+  resetPassword(id: string, password: string) {
+    return this.request<null>("POST", `/admin/users/${encodeURIComponent(id)}/password`, { password });
+  }
+
+  auditLog(limit = 200) {
+    return this.request<AuditEntry[]>("GET", `/audit?limit=${limit}`);
+  }
+
+  verifyAudit() {
+    return this.request<{ ok: boolean; checked: number; first_bad_id: number | null }>("GET", "/audit/verify");
   }
 
   listDevices() {

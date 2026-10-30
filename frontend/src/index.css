@@ -1160,3 +1160,56 @@ button.secondary.active {
   font-size: 2.4rem;
   line-height: 1;
 }
+
+/* ---------------------------------------------------------------- roles & navigation */
+
+.topnav {
+  display: flex;
+  gap: 0.25rem;
+}
+.topnav a {
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.topnav a:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.topnav a.active {
+  background: #f0fdfa;
+  color: var(--brand);
+}
+.role-chip {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--grey-bg);
+  color: var(--text);
+  margin-left: 0.25rem;
+}
+.role-doctor {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.role-admin {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+.user-row.inactive {
+  opacity: 0.6;
+}
+.user-row select {
+  width: auto;
+  min-height: 36px;
+  padding: 0.3rem 0.5rem;
+}
+.review-queue h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

@@ -82,6 +82,20 @@ Open **http://localhost:5173** in Chrome. API calls go to `/api`, which the dev 
 | `doctor` | `doctor123` | doctor |
 | `admin` | `admin123` | admin: manages users and the audit log; cannot edit patient records |
 
+Each role lands on its own home screen:
+
+- **Health worker:** patients, capture and sync.
+- **Doctor:** the same, plus **Waiting for your review** (draft case files to verify) and the audit log.
+- **Admin:** **Staff**, **Devices** and **Audit log** only.
+
+**To add a real doctor or health worker:**
+
+1. Sign in as `admin`.
+2. Open **Staff** → **Add a doctor or health worker**, and give the person their username and temporary password.
+3. They sign in once while online on their own device. After that they can also sign in offline.
+
+From the same screen the admin can change a role, reset a password, or deactivate an account. Deactivation cuts off that person's devices at their next sync.
+
 ---
 
 ## 5. Try offline mode

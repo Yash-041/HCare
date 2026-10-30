@@ -206,10 +206,29 @@ class DeviceOut(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=64)
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
     password: str = Field(min_length=8, max_length=128)
     role: Role
-    full_name: str = ""
+    full_name: str = Field(default="", max_length=200)
+
+
+class UserAdminOut(BaseModel):
+    id: str
+    username: str
+    full_name: str
+    role: Role
+    active: bool
+    created_at: datetime
+
+
+class UpdateUserRequest(BaseModel):
+    full_name: str | None = Field(default=None, max_length=200)
+    role: Role | None = None
+    active: bool | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 
 # ---------------------------------------------------------------- sync DTOs

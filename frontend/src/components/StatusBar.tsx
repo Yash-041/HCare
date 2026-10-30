@@ -1,9 +1,24 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useApp } from "../app/AppContext";
 import { useConnectivity, useSyncBadge } from "../app/hooks";
 import type { RecordSyncStatus } from "../lib/types";
 
 const CONNECTIVITY_LABEL = { online: "Online", offline: "Offline", unreachable: "Server unreachable" } as const;
+const ROLE_LABEL = { health_worker: "Health worker", doctor: "Doctor", admin: "Admin" } as const;
+
+/** Role-specific sections; patients are reached from the home screen. */
+const NAV: Record<keyof typeof ROLE_LABEL, [string, string][]> = {
+  admin: [
+    ["/admin/users", "Staff"],
+    ["/admin/devices", "Devices"],
+    ["/admin/audit", "Audit log"],
+  ],
+  doctor: [
+    ["/", "Patients"],
+    ["/audit", "Audit log"],
+  ],
+  health_worker: [["/", "Patients"]],
+};
 
 export function TopBar() {
   const { session, signOut, lockNow } = useApp();
@@ -17,6 +32,13 @@ export function TopBar() {
         <img src="/icon.svg" alt="" width={28} height={28} />
         HCare
       </Link>
+      <nav className="topnav" aria-label="Sections">
+        {NAV[session.user.role].map(([to, label]) => (
+          <NavLink key={to} to={to} end className={({ isActive }) => (isActive ? "active" : "")}>
+            {label}
+          </NavLink>
+        ))}
+      </nav>
       <div className="topbar-status">
         <span className={`conn conn-${connectivity}`} title={CONNECTIVITY_LABEL[connectivity]}>
           <span className="dot" />
@@ -27,7 +49,9 @@ export function TopBar() {
         </Link>
       </div>
       <div className="topbar-user">
-        <span className="user-name">{session.user.full_name || session.user.username}</span>
+        <span className="user-name">
+          {session.user.full_name || session.user.username} <span className={`role-chip role-${session.user.role}`}>{ROLE_LABEL[session.user.role]}</span>
+        </span>
         <button className="link" onClick={lockNow} title="Lock: patient data stays encrypted until the password is entered">
           Lock
         </button>

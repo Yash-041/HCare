@@ -42,6 +42,46 @@ def test_admin_can_create_user(client, admin):
     login(client, "nurse1", "nurse-pass-1")
 
 
+def test_admin_manages_staff_accounts(client, admin):
+    r = client.post("/admin/users", json={"username": "dr.sharma", "password": "secret-pass-1", "role": "doctor", "full_name": "Dr. A. Sharma"}, headers=admin)
+    assert r.status_code == 201
+    uid = r.json()["id"]
+    assert client.post("/admin/users", json={"username": "dr.sharma", "password": "another-pass", "role": "doctor"}, headers=admin).status_code == 409
+
+    users = {u["username"]: u for u in client.get("/admin/users", headers=admin).json()}
+    assert users["dr.sharma"] == {**users["dr.sharma"], "role": "doctor", "active": True, "full_name": "Dr. A. Sharma"}
+
+    doc = login(client, "dr.sharma", "secret-pass-1")
+    assert client.get("/auth/me", headers=doc).status_code == 200
+
+    # Deactivating takes effect immediately, even for an existing session.
+    assert client.patch(f"/admin/users/{uid}", json={"active": False}, headers=admin).json()["active"] is False
+    assert client.get("/auth/me", headers=doc).status_code == 401
+    assert client.post("/auth/login", json={"username": "dr.sharma", "password": "secret-pass-1"}).status_code == 401
+
+    # Reactivate + password reset: the old password stops working.
+    client.patch(f"/admin/users/{uid}", json={"active": True}, headers=admin)
+    assert client.post(f"/admin/users/{uid}/password", json={"password": "new-secret-2"}, headers=admin).status_code == 204
+    assert client.post("/auth/login", json={"username": "dr.sharma", "password": "secret-pass-1"}).status_code == 401
+    login(client, "dr.sharma", "new-secret-2")
+
+    actions = [e["action"] for e in client.get(f"/audit?entity_id={uid}", headers=admin).json()]
+    assert sorted(actions) == ["password_reset", "user_created", "user_updated", "user_updated"]
+    assert client.get("/audit/verify", headers=admin).json()["ok"] is True
+
+
+def test_admin_cannot_lock_themselves_out(client, admin):
+    me = client.get("/auth/me", headers=admin).json()
+    assert client.patch(f"/admin/users/{me['id']}", json={"active": False}, headers=admin).status_code == 400
+    assert client.patch(f"/admin/users/{me['id']}", json={"role": "doctor"}, headers=admin).status_code == 400
+
+
+def test_staff_cannot_manage_accounts(client, asha, doctor):
+    for h in (asha, doctor):
+        assert client.get("/admin/users", headers=h).status_code == 403
+        assert client.post("/admin/users", json={"username": "x-user", "password": "password-1", "role": "admin"}, headers=h).status_code == 403
+
+
 def test_every_operation_is_audited(client, asha, admin):
     pid = new_id()
     create = op("patient", pid, patient_data())
