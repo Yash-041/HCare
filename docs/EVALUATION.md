@@ -102,7 +102,7 @@ These are automated tests against the real server ([SYNC_ENGINE.md](SYNC_ENGINE.
 
 | Operation | Measured |
 |---|---|
-| App shell download (precached for offline) | ~1 MB (140 KB gzipped JavaScript) |
+| App download, precached for offline (code + AI workers; models are separate) | ~2.2 MB |
 | Search: indexing 6,000 records | ~0.35 s |
 | Search: query (symptom + date range, name) | 1–8 ms |
 | Search over 2,000 **encrypted** patients | indexing ~0.4 s · broad query 15 ms · narrow 3 ms |
