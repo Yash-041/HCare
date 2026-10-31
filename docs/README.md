@@ -9,6 +9,7 @@
 | Understand security and privacy | [SECURITY.md](SECURITY.md) |
 | Understand the on-device AI (speech, OCR, extraction, search, history) | [AI_PIPELINE.md](AI_PIPELINE.md) |
 | See the data model and sync protocol | [PHASE1_DATA_MODEL.md](PHASE1_DATA_MODEL.md) |
+| See how the project was built, phase by phase | [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md) |
 
 **Demo files** are in [demo-assets/](demo-assets/):
 - a voice note (`.wav`)
